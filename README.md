@@ -1,0 +1,93 @@
+# 🪴 Bonsai
+
+- a local catalog tool for mapping between Bangumi subjects and qBittorrent.
+
+- an MCP server enabling agentic workflows of managing local Anime collection
+
+## Setup
+
+Install dependencies:
+
+```bash
+uv sync
+```
+
+Create a local `.env` file as needed:
+
+```bash
+QBIT_HOST=http://localhost
+QBIT_PORT=8080
+QBIT_USERNAME=admin
+QBIT_PASSWORD=adminadmin
+BANGUMI_TOKEN=
+```
+
+## Usage
+
+Configure as an MCP server, OpenCode as an example:
+
+```json
+{
+    "$schema": "https://opencode.ai/config.json",
+    "mcp": {
+        "bonsai-manager": {
+            "command": [
+                "uv",
+                "run",
+                "python",
+                "src/main.py",
+                "--",
+                "mcp"
+            ],
+            "cwd": "<path to project root>",
+            "enabled": true,
+            "environment": {
+                "UV_WORKING_DIR": "<path to project root>"
+            },
+            "type": "local"
+        }
+    }
+}
+```
+
+Launch the interactive TUI:
+
+```bash
+uv run ./src/main.py -- tui
+````
+
+## Bonus
+
+To enable OpenCode to directly interact with Bangumi,
+[BangumiMCP](https://github.com/Ukenn2112/BangumiMCP) can be added:
+
+```json
+{
+    "$schema": "https://opencode.ai/config.json",
+    "mcp": {
+        "bangumi": {
+            "command": [
+                "uv",
+                "run",
+                "python",
+                "main.py"
+            ],
+            "enabled": true,
+            "environment": {
+                "UV_WORKING_DIR": "<path to BangumiMCP>"
+            },
+            "type": "local"
+        }
+    }
+}
+```
+
+## Roadmap
+
+- [ ] Database
+  - [ ] Migrate to JSON-based DB to SQLite
+- [ ] Bangumi integration
+  - [ ] Synchronize missing Bangumi collections to local catalog
+- [ ] Torrent management
+  - [ ] [Prowlarr](https://github.com/Prowlarr/Prowlarr) integration
+  - [ ] Torrent location management
