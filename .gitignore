@@ -1,0 +1,21 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Agent environments
+.codex/
+.opencode/
+
+# Virtual environments
+.venv
+
+# Database
+db.json
+
+# Generated search cache
+aggregate_search_index.json
+aggregate_search_query_cache.json
