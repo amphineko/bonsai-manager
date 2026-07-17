@@ -69,13 +69,26 @@ class BangumiConfig:
     base_url: str
     user_agent: str
     token: str | None
+    username: str | None
+    profile_id: str | None
 
     @classmethod
     def from_env(cls, environs: dict[str, str]) -> BangumiConfig:
+        # Support multiple env names: BANGUMI_USERNAME / BANGUMI_USER / BANGUMI_PROFILE_ID / BANGUMI_USER_ID
+        username = (
+            environs.get("BANGUMI_USERNAME")
+            or environs.get("BANGUMI_USER")
+            or environs.get("BANGUMI_PROFILE_ID")
+            or environs.get("BANGUMI_USER_ID")
+        )
+        # Keep profile_id alias for backward compat / explicit numeric id
+        profile_id = environs.get("BANGUMI_PROFILE_ID") or environs.get("BANGUMI_USER_ID")
         return cls(
             base_url=environs.get("BANGUMI_BASE_URL", "https://api.bgm.tv"),
             user_agent=environs.get("BANGUMI_USER_AGENT", "bonsai-manager/0.1.0"),
             token=environs.get("BANGUMI_TOKEN"),
+            username=username,
+            profile_id=profile_id or username,
         )
 
 

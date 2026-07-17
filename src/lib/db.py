@@ -427,3 +427,56 @@ class DBManager:
                     updated_count += 1
         self.save_db(entries)
         return updated_count
+
+    def audit_bangumi_wish(
+        self,
+        username: str,
+        collection_type: int = 1,
+        subject_type: int = 2,
+    ):
+        """Audit Bangumi Wish vs local catalog.
+
+        collection_type: 1=Wish, 3=Doing etc. Default 1 = 想看
+        Returns BangumiWishAudit with missing = Wish but not in local DB.
+        """
+        from lib.models.bangumi import BangumiWishAudit, BangumiWishSubject
+
+        # Fetch all wish collections
+        wish_items = self.bangumi.get_all_user_collections(
+            username, subject_type=subject_type, collection_type=collection_type
+        )
+
+        # Local subject ids
+        local_subject_ids: set[int] = set()
+        for entry in self.load_db():
+            for subj in entry.bangumi_subjects:
+                local_subject_ids.add(subj.subject_id)
+
+        missing: list[BangumiWishSubject] = []
+        existing: list[BangumiWishSubject] = []
+
+        for item in wish_items:
+            subject = item.get("subject", {}) if isinstance(item, dict) else {}
+            sid = subject.get("id")
+            if sid is None:
+                continue
+            ws = BangumiWishSubject(
+                subject_id=sid,
+                name=subject.get("name", "") or "",
+                name_cn=subject.get("name_cn", "") or "",
+                subject_type=subject.get("type"),
+                collection_type=item.get("type"),
+            )
+            if sid in local_subject_ids:
+                existing.append(ws)
+            else:
+                missing.append(ws)
+
+        return BangumiWishAudit(
+            username=username,
+            wish_total=len(wish_items),
+            local_total=len(local_subject_ids),
+            missing_count=len(missing),
+            missing=missing,
+            existing=existing,
+        )

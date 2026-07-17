@@ -3,7 +3,7 @@ from typing import Generic, Literal, TypeVar
 from pydantic import BaseModel
 
 from lib.models.aggregates import Aggregate, Database, Torrent
-from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot
+from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot, BangumiWishAudit, BangumiWishSubject
 from lib.models.qbittorrent import (
     QbittorrentTorrent,
     QbittorrentTorrentFile,
@@ -37,6 +37,8 @@ __all__ = [
     "AggregateSearchResults",
     "BangumiSubject",
     "BangumiSubjectSnapshot",
+    "BangumiWishAudit",
+    "BangumiWishSubject",
     "Database",
     "QbittorrentTorrent",
     "QbittorrentTorrentFile",

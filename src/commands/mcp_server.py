@@ -6,6 +6,7 @@ from config import Config, load_config
 from lib.db import DBManager
 from lib.models import ResponsePayload
 from lib.models.aggregates import Aggregate
+from lib.models.bangumi import BangumiWishAudit
 from lib.models.qbittorrent import TorrentMappingAudit
 from lib.models.search import AggregateSearchResults
 from lib.search import AggregateSearchManager
@@ -163,6 +164,56 @@ def audit_torrent_mapping(
         "Audited torrent mapping",
         manager.audit_torrent_mapping(categories),
     )
+
+
+@mcp.tool
+def audit_bangumi_wish(
+    username: str | None = None,
+    collection_type: int = 1,
+) -> ResponsePayload[BangumiWishAudit]:
+    """Audit Bangumi Wish vs local catalog: which Wish anime are not yet downloaded.
+
+    Args:
+        username: Bangumi username or user ID. If not provided, uses BANGUMI_USERNAME / BANGUMI_PROFILE_ID from env.
+        collection_type: 1=Wish (想看), 3=Doing (在看), 4=On Hold, etc. Default 1.
+
+    Returns:
+        Wish audit with missing = Wish but not in local DB.
+    """
+    config = get_config()
+    target_user = username or config.bangumi.username or config.bangumi.profile_id
+    if not target_user:
+        raise ValueError(
+            "No Bangumi username provided. Set BANGUMI_USERNAME or BANGUMI_PROFILE_ID in .env, or pass username param."
+        )
+    manager = DBManager(config)
+    audit = manager.audit_bangumi_wish(target_user, collection_type=collection_type)
+    return success(
+        f"Audited Bangumi wish for '{target_user}': {audit.missing_count} missing / {audit.wish_total} wish",
+        audit,
+    )
+
+
+@mcp.tool
+def get_bangumi_user_collections(
+    username: str | None = None,
+    subject_type: int = 2,
+    collection_type: int | None = 1,
+    limit: int = 50,
+    offset: int = 0,
+) -> ResponsePayload[dict]:
+    """Get raw Bangumi user collections for debugging/inspection."""
+    config = get_config()
+    target_user = username or config.bangumi.username or config.bangumi.profile_id
+    if not target_user:
+        raise ValueError("No Bangumi username provided.")
+    from lib.bangumi import BangumiClient
+
+    client = BangumiClient(config.bangumi)
+    data = client.get_user_collections(
+        target_user, subject_type=subject_type, collection_type=collection_type, limit=limit, offset=offset
+    )
+    return success(f"Fetched collections for '{target_user}'", data)
 
 
 def run_mcp_server(config: Config | None = None) -> None:
