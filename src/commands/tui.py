@@ -9,7 +9,7 @@ from textual.binding import Binding
 from rich.text import Text
 from rich.console import Group
 from config import Config, load_config
-from lib.db import DBManager
+from lib.db import AggregateService
 from lib.models.aggregates import Aggregate
 
 
@@ -100,7 +100,7 @@ class BonsaiTUI(App[None]):
     def __init__(self, config: Config | None = None) -> None:
         super().__init__()
         self.config = config or load_config()
-        self.manager = DBManager(self.config)
+        self.manager = AggregateService(self.config)
         self.all_entries: list[Aggregate] = []
         self.filtered_entries: list[Aggregate] = []
 
@@ -132,7 +132,7 @@ class BonsaiTUI(App[None]):
         self.refresh_data()
 
     def refresh_data(self) -> None:
-        self.all_entries = self.manager.load_db()
+        self.all_entries = self.manager.list_all()
         current_input = self.query_one(Input).value
         self.apply_filter(current_input)
 
@@ -209,6 +209,13 @@ class BonsaiTUI(App[None]):
                     renderables.append(Text(subject.snapshot.name_cn, style="green"))
                     renderables.append(Text(f"Original: {subject.snapshot.name}"))
                     renderables.append(Text(f"Type: {subject.snapshot.type or '-'}"))
+                    if subject.snapshot.tags:
+                        renderables.append(
+                            Text(
+                                "Tags: "
+                                + ", ".join(tag.name for tag in subject.snapshot.tags)
+                            )
+                        )
                 else:
                     renderables.append(Text("Snapshot: missing", style="yellow"))
                 renderables.append(Text(f"Bangumi ID: {subject.subject_id}"))

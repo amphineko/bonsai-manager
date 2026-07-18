@@ -1,10 +1,6 @@
-import json
 import os
-from pathlib import Path
-from fnmatch import fnmatch
 from datetime import datetime
 from typing import List, Dict
-from pydantic import TypeAdapter
 
 from config import Config, load_config
 from lib.bangumi import BangumiClient
@@ -16,6 +12,10 @@ from lib.models.qbittorrent import (
     TrackedTorrentMapping,
 )
 from lib.qbittorrent import QbittorrentClient
+from lib.repositories import (
+    AggregateRepository,
+    create_repository,
+)
 
 
 def get_torrent_display_path(save_path: str, files: List[str]) -> str:
@@ -32,32 +32,30 @@ def get_torrent_display_path(save_path: str, files: List[str]) -> str:
         return save_path
 
 
-class DBManager:
+class AggregateService:
     def __init__(
         self,
-        config: Config | str | Path | None = None,
-        db_path: str | Path | None = None,
+        config: Config | None = None,
+        repository: AggregateRepository | None = None,
     ):
-        if isinstance(config, str | Path):
-            db_path = config
-            config = None
-
         self.config = config or load_config()
-        self.db_path = Path(db_path) if db_path is not None else self.config.db_path
+        self.repository = repository or (
+            create_repository(
+                self.config.database.backend,
+                self.config.database.path,
+            )
+        )
         self.qbit = QbittorrentClient(self.config.qbittorrent)
         self.bangumi = BangumiClient(self.config.bangumi)
 
     def load_db(self) -> List[Aggregate]:
-        if not self.db_path.exists():
-            return []
-        with self.db_path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-            return TypeAdapter(List[Aggregate]).validate_python(data)
+        return self.list_all()
+
+    def list_all(self) -> List[Aggregate]:
+        return self.repository.list_all()
 
     def save_db(self, entries: List[Aggregate]) -> None:
-        with self.db_path.open("w", encoding="utf-8") as f:
-            data = [entry.model_dump() for entry in entries]
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        self.repository.replace_all(entries)
 
     def touch_entry(self, entry: Aggregate, timestamp: str) -> None:
         for subject in entry.bangumi_subjects:
@@ -92,8 +90,8 @@ class DBManager:
         bangumi_subject_id: int | None = None,
         torrent_hashes: List[str] | None = None,
     ) -> Aggregate:
-        entries = self.load_db()
-        if any(e.short_name == short_name for e in entries):
+        entries = self.repository.list_all()
+        if self.repository.get_by_short_name(short_name) is not None:
             raise ValueError(f"Aggregate '{short_name}' already exists.")
 
         torrent_hashes = torrent_hashes or []
@@ -116,25 +114,13 @@ class DBManager:
             bangumi_subjects=bangumi_subjects,
             torrents=[Torrent(hash=torrent_hash) for torrent_hash in torrent_hashes],
         )
-        entries.append(new_entry)
-        self.save_db(entries)
+        self.repository.add(new_entry)
         return new_entry
 
     def remove_aggregate(self, short_name: str) -> Aggregate:
-        entries = self.load_db()
-        target_index = next(
-            (
-                index
-                for index, entry in enumerate(entries)
-                if entry.short_name == short_name
-            ),
-            None,
-        )
-        if target_index is None:
+        removed_entry = self.repository.remove_by_short_name(short_name)
+        if removed_entry is None:
             raise ValueError(f"Aggregate '{short_name}' not found.")
-
-        removed_entry = entries.pop(target_index)
-        self.save_db(entries)
         return removed_entry
 
     def add_torrent(self, short_name: str, torrent_hash: str) -> Torrent:
@@ -147,7 +133,7 @@ class DBManager:
         add_hashes: List[str] | None = None,
         remove_hashes: List[str] | None = None,
     ) -> List[str]:
-        entries = self.load_db()
+        entries = self.list_all()
         target_entry = next((e for e in entries if e.short_name == short_name), None)
         if not target_entry:
             raise ValueError(f"Anime '{short_name}' not found.")
@@ -185,7 +171,7 @@ class DBManager:
             Torrent(hash=torrent_hash) for torrent_hash in add_hashes
         )
         self.touch_entry(target_entry, datetime.now().isoformat())
-        self.save_db(entries)
+        self.repository.replace(target_entry)
         return [torrent.hash for torrent in target_entry.torrents]
 
     def update_aggregate_bangumi_subjects(
@@ -194,7 +180,7 @@ class DBManager:
         add_subject_ids: List[int] | None = None,
         remove_subject_ids: List[int] | None = None,
     ) -> List[int]:
-        entries = self.load_db()
+        entries = self.list_all()
         target_entry = next((e for e in entries if e.short_name == short_name), None)
         if not target_entry:
             raise ValueError(f"Anime '{short_name}' not found.")
@@ -251,7 +237,7 @@ class DBManager:
                 )
             )
         self.touch_entry(target_entry, now)
-        self.save_db(entries)
+        self.repository.replace(target_entry)
         return [subject.subject_id for subject in target_entry.bangumi_subjects]
 
     def list_aggregates(
@@ -273,39 +259,12 @@ class DBManager:
         ):
             raise ValueError("At least one filter argument is required.")
 
-        filter_torrent_hash_set = set(filter_torrent_hashes)
-        matches = []
-        for entry in self.load_db():
-            short_name_matches = any(
-                fnmatch(entry.short_name, pattern) for pattern in filter_short_name
-            )
-            torrent_hash_matches = any(
-                torrent.hash in filter_torrent_hash_set for torrent in entry.torrents
-            )
-            bangumi_subject_name_matches = any(
-                subject.snapshot
-                and any(
-                    fnmatch(subject.snapshot.name, pattern)
-                    for pattern in filter_bangumi_subject_name
-                )
-                for subject in entry.bangumi_subjects
-            )
-            bangumi_subject_cn_name_matches = any(
-                subject.snapshot
-                and any(
-                    fnmatch(subject.snapshot.name_cn, pattern)
-                    for pattern in filter_bangumi_subject_cn_name
-                )
-                for subject in entry.bangumi_subjects
-            )
-            if (
-                short_name_matches
-                or torrent_hash_matches
-                or bangumi_subject_name_matches
-                or bangumi_subject_cn_name_matches
-            ):
-                matches.append(entry)
-        return matches
+        return self.repository.find(
+            filter_short_name,
+            filter_torrent_hashes,
+            filter_bangumi_subject_name,
+            filter_bangumi_subject_cn_name,
+        )
 
     def get_torrent_display_path(self, torrent: Torrent) -> str:
         self.qbit.login()
@@ -316,7 +275,7 @@ class DBManager:
         return get_torrent_display_path(info.save_path, [file.name for file in files])
 
     def move_torrent(self, torrent_hash: str, target_short_name: str) -> str:
-        entries = self.load_db()
+        entries = self.repository.list_all()
 
         source_entry = None
         torrent_to_move = None
@@ -351,7 +310,8 @@ class DBManager:
         self.touch_entry(source_entry, now)
         self.touch_entry(target_entry, now)
 
-        self.save_db(entries)
+        self.repository.replace(source_entry)
+        self.repository.replace(target_entry)
         return source_entry.short_name
 
     def audit_torrent_mapping(
@@ -359,7 +319,7 @@ class DBManager:
         categories: List[str] | None = None,
     ) -> TorrentMappingAudit:
         categories = categories or list(self.config.audit_categories)
-        entries = self.load_db()
+        entries = self.repository.list_all()
         self.qbit.login()
         qbit_torrents = self.qbit.get_all_torrents()
 
@@ -411,7 +371,7 @@ class DBManager:
 
     def sync_bangumi_types(self, subject_data: Dict[int, int]):
         """Update subject types from provided Bangumi mapping (fetched via MCP)."""
-        entries = self.load_db()
+        entries = self.repository.list_all()
         updated_count = 0
         for entry in entries:
             for subject in entry.bangumi_subjects:
@@ -425,5 +385,8 @@ class DBManager:
                             type=subject_data[subject.subject_id],
                         )
                     updated_count += 1
-        self.save_db(entries)
+        self.repository.replace_all(entries)
         return updated_count
+
+
+DBManager = AggregateService

@@ -13,6 +13,7 @@ dependencies = [
     "requests>=2.34.2",
     "rich>=15.0.0",
     "sentence-transformers>=5.6.0",
+    "sqlalchemy>=2.0.51",
     "tabulate>=0.10.0",
     "textual>=8.2.7",
     "textual-serve>=1.1.3",

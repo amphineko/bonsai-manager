@@ -4,7 +4,7 @@ from rich.table import Table
 from rich.text import Text
 
 from config import Config
-from lib.db import DBManager
+from lib.db import AggregateService
 
 
 @click.command(name="audit")
@@ -17,7 +17,7 @@ from lib.db import DBManager
 @click.pass_obj
 def audit_torrent_mapping(config: Config, category: tuple[str, ...]) -> None:
     """Inspect qBittorrent against stored torrent hashes."""
-    manager = DBManager(config)
+    manager = AggregateService(config)
     try:
         categories = list(category) if category else None
         result = manager.audit_torrent_mapping(categories)

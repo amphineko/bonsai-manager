@@ -91,6 +91,11 @@ class AggregateSearchManager:
             if subject.snapshot:
                 lines.append(f"bangumi_name: {subject.snapshot.name}")
                 lines.append(f"bangumi_cn_name: {subject.snapshot.name_cn}")
+                if subject.snapshot.tags:
+                    lines.append(
+                        "bangumi_tags: "
+                        + ", ".join(tag.name for tag in subject.snapshot.tags)
+                    )
         return "\n".join(line for line in lines if not line.endswith(": "))
 
     def source_hash(self, source_text: str) -> str:
