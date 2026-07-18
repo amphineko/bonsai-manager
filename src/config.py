@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from dotenv import dotenv_values
@@ -140,27 +139,13 @@ class WebConfig:
 
 @dataclass
 class DatabaseConfig:
-    backend: Literal["json", "sqlite"]
     path: Path
 
     @classmethod
     def from_env(cls, environs: dict[str, str]) -> DatabaseConfig:
-        backend = cls.parse_backend(environs.get("DB_BACKEND", "sqlite"))
-        default_path = "db.sqlite3" if backend == "sqlite" else "db.json"
         return cls(
-            backend=backend,
-            path=resolve_project_path(Path(environs.get("DB_PATH", default_path))),
+            path=resolve_project_path(Path(environs.get("DB_PATH", "db.sqlite3"))),
         )
-
-    @staticmethod
-    def parse_backend(value: str) -> Literal["json", "sqlite"]:
-        match value.lower():
-            case "json":
-                return "json"
-            case "sqlite":
-                return "sqlite"
-            case _:
-                raise ValueError(f"DB_BACKEND must be json or sqlite, got {value!r}")
 
 
 @dataclass

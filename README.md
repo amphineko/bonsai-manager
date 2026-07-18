@@ -15,6 +15,7 @@ uv sync
 Create a local `.env` file as needed:
 
 ```bash
+DB_PATH=db.sqlite3
 QBIT_HOST=http://localhost
 QBIT_PORT=8080
 QBIT_USERNAME=admin
@@ -85,7 +86,8 @@ To enable OpenCode to directly interact with Bangumi,
 ## Roadmap
 
 - [ ] Database
-  - [ ] Migrate to JSON-based DB to SQLite
+  - [x] Migrate aggregate storage to SQLite
+  - [ ] Add schema migrations for future SQLite changes
 - [ ] Bangumi integration
   - [ ] Synchronize missing Bangumi collections to local catalog
 - [ ] Torrent management

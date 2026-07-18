@@ -14,7 +14,7 @@ from lib.models.qbittorrent import (
 from lib.qbittorrent import QbittorrentClient
 from lib.repositories import (
     AggregateRepository,
-    create_repository,
+    SqliteAggregateRepository,
 )
 
 
@@ -39,40 +39,29 @@ class AggregateService:
         repository: AggregateRepository | None = None,
     ):
         self.config = config or load_config()
-        self.repository = repository or (
-            create_repository(
-                self.config.database.backend,
-                self.config.database.path,
-            )
+        self.repository = repository or SqliteAggregateRepository(
+            self.config.database.path
         )
         self.qbit = QbittorrentClient(self.config.qbittorrent)
         self.bangumi = BangumiClient(self.config.bangumi)
 
-    def load_db(self) -> List[Aggregate]:
-        return self.list_all()
-
     def list_all(self) -> List[Aggregate]:
         return self.repository.list_all()
-
-    def save_db(self, entries: List[Aggregate]) -> None:
-        self.repository.replace_all(entries)
 
     def touch_entry(self, entry: Aggregate, timestamp: str) -> None:
         for subject in entry.bangumi_subjects:
             subject.last_updated_at = timestamp
 
-    def validate_new_torrent_hashes(
-        self, entries: List[Aggregate], torrent_hashes: List[str]
-    ) -> None:
+    def validate_new_torrent_hashes(self, torrent_hashes: List[str]) -> None:
         if len(set(torrent_hashes)) != len(torrent_hashes):
             raise ValueError("Torrent hashes contain duplicates.")
 
         for torrent_hash in torrent_hashes:
-            for entry in entries:
-                if any(t.hash == torrent_hash for t in entry.torrents):
-                    raise ValueError(
-                        f"Torrent hash already exists in '{entry.short_name}'."
-                    )
+            existing_entry = self.repository.get_by_torrent_hash(torrent_hash)
+            if existing_entry is not None:
+                raise ValueError(
+                    f"Torrent hash already exists in '{existing_entry.short_name}'."
+                )
 
         if torrent_hashes:
             self.qbit.login()
@@ -90,12 +79,11 @@ class AggregateService:
         bangumi_subject_id: int | None = None,
         torrent_hashes: List[str] | None = None,
     ) -> Aggregate:
-        entries = self.repository.list_all()
         if self.repository.get_by_short_name(short_name) is not None:
             raise ValueError(f"Aggregate '{short_name}' already exists.")
 
         torrent_hashes = torrent_hashes or []
-        self.validate_new_torrent_hashes(entries, torrent_hashes)
+        self.validate_new_torrent_hashes(torrent_hashes)
 
         bangumi_subjects = []
         if bangumi_subject_id is not None:
@@ -133,8 +121,7 @@ class AggregateService:
         add_hashes: List[str] | None = None,
         remove_hashes: List[str] | None = None,
     ) -> List[str]:
-        entries = self.list_all()
-        target_entry = next((e for e in entries if e.short_name == short_name), None)
+        target_entry = self.repository.get_by_short_name(short_name)
         if not target_entry:
             raise ValueError(f"Anime '{short_name}' not found.")
 
@@ -161,7 +148,7 @@ class AggregateService:
                 f"Torrent hash not found in '{short_name}': {', '.join(missing_hashes)}"
             )
 
-        self.validate_new_torrent_hashes(entries, add_hashes)
+        self.validate_new_torrent_hashes(add_hashes)
         target_entry.torrents = [
             torrent
             for torrent in target_entry.torrents
@@ -171,7 +158,11 @@ class AggregateService:
             Torrent(hash=torrent_hash) for torrent_hash in add_hashes
         )
         self.touch_entry(target_entry, datetime.now().isoformat())
-        self.repository.replace(target_entry)
+        self.repository.update_torrents(short_name, target_entry.torrents)
+        self.repository.update_bangumi_subjects(
+            short_name,
+            target_entry.bangumi_subjects,
+        )
         return [torrent.hash for torrent in target_entry.torrents]
 
     def update_aggregate_bangumi_subjects(
@@ -180,8 +171,7 @@ class AggregateService:
         add_subject_ids: List[int] | None = None,
         remove_subject_ids: List[int] | None = None,
     ) -> List[int]:
-        entries = self.list_all()
-        target_entry = next((e for e in entries if e.short_name == short_name), None)
+        target_entry = self.repository.get_by_short_name(short_name)
         if not target_entry:
             raise ValueError(f"Anime '{short_name}' not found.")
 
@@ -237,7 +227,10 @@ class AggregateService:
                 )
             )
         self.touch_entry(target_entry, now)
-        self.repository.replace(target_entry)
+        self.repository.update_bangumi_subjects(
+            short_name,
+            target_entry.bangumi_subjects,
+        )
         return [subject.subject_id for subject in target_entry.bangumi_subjects]
 
     def list_aggregates(
@@ -275,34 +268,34 @@ class AggregateService:
         return get_torrent_display_path(info.save_path, [file.name for file in files])
 
     def move_torrent(self, torrent_hash: str, target_short_name: str) -> str:
-        entries = self.repository.list_all()
-
-        source_entry = None
-        torrent_to_move = None
-        for entry in entries:
-            for i, t in enumerate(entry.torrents):
-                if t.hash == torrent_hash:
-                    source_entry = entry
-                    torrent_to_move = entry.torrents.pop(i)
-                    break
-            if source_entry:
-                break
-
+        source_entry = self.repository.get_by_torrent_hash(torrent_hash)
         if not source_entry:
             raise ValueError(
                 f"Torrent with hash '{torrent_hash}' not found in database."
             )
+        torrent_to_move = next(
+            (
+                torrent
+                for torrent in source_entry.torrents
+                if torrent.hash == torrent_hash
+            ),
+            None,
+        )
         if torrent_to_move is None:
             raise ValueError(
                 f"Torrent with hash '{torrent_hash}' not found in database."
             )
+        source_entry.torrents = [
+            torrent for torrent in source_entry.torrents if torrent.hash != torrent_hash
+        ]
 
-        target_entry = next(
-            (e for e in entries if e.short_name == target_short_name), None
-        )
-        if not target_entry:
-            source_entry.torrents.append(torrent_to_move)
-            raise ValueError(f"Target anime '{target_short_name}' not found.")
+        if source_entry.short_name == target_short_name:
+            target_entry = source_entry
+        else:
+            target_entry = self.repository.get_by_short_name(target_short_name)
+            if not target_entry:
+                source_entry.torrents.append(torrent_to_move)
+                raise ValueError(f"Target anime '{target_short_name}' not found.")
 
         target_entry.torrents.append(torrent_to_move)
 
@@ -310,8 +303,16 @@ class AggregateService:
         self.touch_entry(source_entry, now)
         self.touch_entry(target_entry, now)
 
-        self.repository.replace(source_entry)
-        self.repository.replace(target_entry)
+        self.repository.update_torrents(source_entry.short_name, source_entry.torrents)
+        self.repository.update_bangumi_subjects(
+            source_entry.short_name,
+            source_entry.bangumi_subjects,
+        )
+        self.repository.update_torrents(target_entry.short_name, target_entry.torrents)
+        self.repository.update_bangumi_subjects(
+            target_entry.short_name,
+            target_entry.bangumi_subjects,
+        )
         return source_entry.short_name
 
     def audit_torrent_mapping(
@@ -374,6 +375,7 @@ class AggregateService:
         entries = self.repository.list_all()
         updated_count = 0
         for entry in entries:
+            entry_updated = False
             for subject in entry.bangumi_subjects:
                 if subject.subject_id in subject_data:
                     if subject.snapshot:
@@ -385,7 +387,12 @@ class AggregateService:
                             type=subject_data[subject.subject_id],
                         )
                     updated_count += 1
-        self.repository.replace_all(entries)
+                    entry_updated = True
+            if entry_updated:
+                self.repository.update_bangumi_subjects(
+                    entry.short_name,
+                    entry.bangumi_subjects,
+                )
         return updated_count
 
 

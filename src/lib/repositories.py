@@ -6,7 +6,6 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Protocol
 
-from pydantic import TypeAdapter
 from sqlalchemy import ForeignKey, String, Text, create_engine, delete, event, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import (
@@ -42,116 +41,17 @@ class AggregateRepository(Protocol):
 
     def add(self, aggregate: Aggregate) -> None: ...
 
-    def replace(self, aggregate: Aggregate) -> None: ...
+    def update_torrents(self, short_name: str, torrents: list[Torrent]) -> None: ...
 
-    def replace_all(self, aggregates: list[Aggregate]) -> None: ...
+    def update_bangumi_subjects(
+        self,
+        short_name: str,
+        subjects: list[BangumiSubject],
+    ) -> None: ...
+
+    def import_all(self, aggregates: list[Aggregate]) -> None: ...
 
     def remove_by_short_name(self, short_name: str) -> Aggregate | None: ...
-
-
-class JsonAggregateRepository:
-    def __init__(self, db_path: str | Path):
-        self.db_path = Path(db_path)
-
-    def list_all(self) -> list[Aggregate]:
-        if not self.db_path.exists():
-            return []
-        with self.db_path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-        return TypeAdapter(list[Aggregate]).validate_python(data)
-
-    def save_all(self, aggregates: list[Aggregate]) -> None:
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.db_path.open("w", encoding="utf-8") as f:
-            data = [aggregate.model_dump() for aggregate in aggregates]
-            json.dump(data, f, ensure_ascii=False, indent=2)
-
-    def get_by_short_name(self, short_name: str) -> Aggregate | None:
-        return next(
-            (
-                aggregate
-                for aggregate in self.list_all()
-                if aggregate.short_name == short_name
-            ),
-            None,
-        )
-
-    def get_by_torrent_hash(self, torrent_hash: str) -> Aggregate | None:
-        return next(
-            (
-                aggregate
-                for aggregate in self.list_all()
-                if any(torrent.hash == torrent_hash for torrent in aggregate.torrents)
-            ),
-            None,
-        )
-
-    def get_by_bangumi_subject_id(self, subject_id: int) -> list[Aggregate]:
-        return [
-            aggregate
-            for aggregate in self.list_all()
-            if any(
-                subject.subject_id == subject_id
-                for subject in aggregate.bangumi_subjects
-            )
-        ]
-
-    def find(
-        self,
-        short_name_patterns: list[str] | None = None,
-        torrent_hashes: list[str] | None = None,
-        bangumi_subject_name_patterns: list[str] | None = None,
-        bangumi_subject_cn_name_patterns: list[str] | None = None,
-    ) -> list[Aggregate]:
-        return filter_aggregates(
-            self.list_all(),
-            short_name_patterns,
-            torrent_hashes,
-            bangumi_subject_name_patterns,
-            bangumi_subject_cn_name_patterns,
-        )
-
-    def add(self, aggregate: Aggregate) -> None:
-        aggregates = self.list_all()
-        aggregates.append(aggregate)
-        self.save_all(aggregates)
-
-    def replace(self, aggregate: Aggregate) -> None:
-        aggregates = []
-        replaced = False
-        for existing in self.list_all():
-            if existing.short_name == aggregate.short_name:
-                aggregates.append(aggregate)
-                replaced = True
-            else:
-                aggregates.append(existing)
-        if not replaced:
-            aggregates.append(aggregate)
-        self.save_all(aggregates)
-
-    def replace_all(self, aggregates: list[Aggregate]) -> None:
-        self.save_all(aggregates)
-
-    def remove_by_short_name(self, short_name: str) -> Aggregate | None:
-        aggregates = self.list_all()
-        removed = next(
-            (
-                aggregate
-                for aggregate in aggregates
-                if aggregate.short_name == short_name
-            ),
-            None,
-        )
-        if removed is None:
-            return None
-        self.save_all(
-            [
-                aggregate
-                for aggregate in aggregates
-                if aggregate.short_name != short_name
-            ]
-        )
-        return removed
 
 
 class Base(DeclarativeBase):
@@ -305,19 +205,39 @@ class SqliteAggregateRepository:
         with self.session_factory.begin() as session:
             session.add(row_from_aggregate(aggregate, session))
 
-    def replace(self, aggregate: Aggregate) -> None:
+    def update_torrents(self, short_name: str, torrents: list[Torrent]) -> None:
         with self.session_factory.begin() as session:
-            existing = session.scalar(
-                select(AggregateRow).where(
-                    AggregateRow.short_name == aggregate.short_name
+            aggregate_id = aggregate_id_for_short_name(session, short_name)
+            session.execute(
+                delete(TorrentRow).where(TorrentRow.aggregate_id == aggregate_id)
+            )
+            session.add_all(
+                TorrentRow(hash=torrent.hash, aggregate_id=aggregate_id)
+                for torrent in sorted(torrents, key=lambda item: item.hash)
+            )
+
+    def update_bangumi_subjects(
+        self,
+        short_name: str,
+        subjects: list[BangumiSubject],
+    ) -> None:
+        with self.session_factory.begin() as session:
+            aggregate_id = aggregate_id_for_short_name(session, short_name)
+            session.execute(
+                delete(AggregateBangumiSubjectRow).where(
+                    AggregateBangumiSubjectRow.aggregate_id == aggregate_id
                 )
             )
-            if existing is not None:
-                session.delete(existing)
-                session.flush()
-            session.add(row_from_aggregate(aggregate, session))
+            for subject in subjects:
+                upsert_subject_row(session, subject)
+                session.add(
+                    AggregateBangumiSubjectRow(
+                        aggregate_id=aggregate_id,
+                        subject_id=subject.subject_id,
+                    )
+                )
 
-    def replace_all(self, aggregates: list[Aggregate]) -> None:
+    def import_all(self, aggregates: list[Aggregate]) -> None:
         with self.session_factory.begin() as session:
             session.execute(delete(TorrentRow))
             session.execute(delete(AggregateBangumiSubjectRow))
@@ -351,6 +271,15 @@ def aggregate_load_options():
 
 def stable_aggregate_id(short_name: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"bonsai-manager:aggregate:{short_name}"))
+
+
+def aggregate_id_for_short_name(session: Session, short_name: str) -> str:
+    aggregate_id = session.scalar(
+        select(AggregateRow.id).where(AggregateRow.short_name == short_name)
+    )
+    if aggregate_id is None:
+        raise ValueError(f"Aggregate '{short_name}' not found.")
+    return aggregate_id
 
 
 def aggregate_from_row(row: AggregateRow) -> Aggregate:
@@ -388,29 +317,7 @@ def row_from_aggregate(aggregate: Aggregate, session: Session) -> AggregateRow:
         category=aggregate.category,
     )
     for subject in aggregate.bangumi_subjects:
-        snapshot = subject.snapshot
-        subject_row = session.get(BangumiSubjectRow, subject.subject_id)
-        if subject_row is None:
-            subject_row = BangumiSubjectRow(
-                subject_id=subject.subject_id,
-                name=snapshot.name if snapshot else "",
-                name_cn=snapshot.name_cn if snapshot else "",
-                type=snapshot.type if snapshot else None,
-                tags_json=json.dumps(
-                    [tag.model_dump() for tag in snapshot.tags] if snapshot else [],
-                    ensure_ascii=False,
-                ),
-                updated_at=subject.last_updated_at,
-            )
-        elif snapshot is not None:
-            subject_row.name = snapshot.name
-            subject_row.name_cn = snapshot.name_cn
-            subject_row.type = snapshot.type
-            subject_row.tags_json = json.dumps(
-                [tag.model_dump() for tag in snapshot.tags],
-                ensure_ascii=False,
-            )
-            subject_row.updated_at = subject.last_updated_at
+        subject_row = upsert_subject_row(session, subject)
         row.subject_links.append(
             AggregateBangumiSubjectRow(
                 subject_id=subject.subject_id,
@@ -423,6 +330,34 @@ def row_from_aggregate(aggregate: Aggregate, session: Session) -> AggregateRow:
         for torrent in sorted(aggregate.torrents, key=lambda item: item.hash)
     ]
     return row
+
+
+def upsert_subject_row(session: Session, subject: BangumiSubject) -> BangumiSubjectRow:
+    snapshot = subject.snapshot
+    subject_row = session.get(BangumiSubjectRow, subject.subject_id)
+    if subject_row is None:
+        subject_row = BangumiSubjectRow(
+            subject_id=subject.subject_id,
+            name=snapshot.name if snapshot else "",
+            name_cn=snapshot.name_cn if snapshot else "",
+            type=snapshot.type if snapshot else None,
+            tags_json=json.dumps(
+                [tag.model_dump() for tag in snapshot.tags] if snapshot else [],
+                ensure_ascii=False,
+            ),
+            updated_at=subject.last_updated_at,
+        )
+        session.add(subject_row)
+    elif snapshot is not None:
+        subject_row.name = snapshot.name
+        subject_row.name_cn = snapshot.name_cn
+        subject_row.type = snapshot.type
+        subject_row.tags_json = json.dumps(
+            [tag.model_dump() for tag in snapshot.tags],
+            ensure_ascii=False,
+        )
+        subject_row.updated_at = subject.last_updated_at
+    return subject_row
 
 
 def filter_aggregates(
@@ -469,16 +404,3 @@ def filter_aggregates(
         ):
             matches.append(aggregate)
     return matches
-
-
-def create_repository(
-    db_backend: str,
-    db_path: Path,
-) -> AggregateRepository:
-    match db_backend:
-        case "sqlite":
-            return SqliteAggregateRepository(db_path)
-        case "json":
-            return JsonAggregateRepository(db_path)
-        case _:
-            raise ValueError(f"Invalid backend {db_backend}")

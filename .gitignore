@@ -19,6 +19,7 @@ SKILLS.md
 
 # Database
 db.json
+*.json.deleted
 *.sqlite3
 *.sqlite3-*
 
