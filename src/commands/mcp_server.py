@@ -3,7 +3,7 @@ from typing import TypeVar
 from fastmcp import FastMCP
 
 from config import Config, load_config
-from lib.db import AggregateService
+from lib.services import AggregateService
 from lib.models import ResponsePayload
 from lib.models.aggregates import Aggregate
 from lib.models.qbittorrent import TorrentMappingAudit

@@ -8,7 +8,7 @@ from pydantic import TypeAdapter
 
 from config import Config
 from lib.models.aggregates import Aggregate
-from lib.repositories import SqliteAggregateRepository
+from lib.sql import SqliteAggregateRepository
 
 DEFAULT_JSON_DB_PATH = Path("db.json")
 

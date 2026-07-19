@@ -9,7 +9,7 @@ from textual.binding import Binding
 from rich.text import Text
 from rich.console import Group
 from config import Config, load_config
-from lib.db import AggregateService
+from lib.services import AggregateService
 from lib.models.aggregates import Aggregate
 
 

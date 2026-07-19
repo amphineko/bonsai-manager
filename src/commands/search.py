@@ -6,7 +6,7 @@ from rich.table import Table
 from rich.text import Text
 
 from config import Config
-from lib.db import AggregateService
+from lib.services import AggregateService
 from lib.models.aggregates import Aggregate
 from lib.search import AggregateSearchManager
 
