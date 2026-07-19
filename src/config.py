@@ -93,8 +93,10 @@ class BangumiConfig:
 
 @dataclass
 class SearchConfig:
+    backend: str
     index_path: Path
     query_cache_path: Path
+    lancedb_path: Path
 
     embedding_model: str
     embedding_query_prompt_model_marker: str
@@ -103,6 +105,7 @@ class SearchConfig:
     @classmethod
     def from_env(cls, environs: dict[str, str]) -> SearchConfig:
         return cls(
+            backend=environs.get("SEARCH_BACKEND", "lancedb"),
             index_path=resolve_project_path(
                 Path(environs.get("SEARCH_INDEX_PATH", "aggregate_search_index.json"))
             ),
@@ -113,6 +116,9 @@ class SearchConfig:
                         "aggregate_search_query_cache.json",
                     )
                 )
+            ),
+            lancedb_path=resolve_project_path(
+                Path(environs.get("SEARCH_LANCEDB_PATH", "aggregate_search.lancedb"))
             ),
             embedding_model=environs.get(
                 "EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-0.6B"

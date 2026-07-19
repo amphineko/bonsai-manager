@@ -21,6 +21,7 @@ QBIT_PORT=8080
 QBIT_USERNAME=admin
 QBIT_PASSWORD=adminadmin
 BANGUMI_TOKEN=
+SEARCH_BACKEND=lancedb
 ```
 
 ## Usage
@@ -55,7 +56,13 @@ Launch the interactive TUI:
 
 ```bash
 uv run ./src/main.py -- tui
-````
+```
+
+Rebuild the semantic search index:
+
+```bash
+uv run ./src/main.py -- search --rebuild-index
+```
 
 ## Bonus
 
@@ -88,6 +95,8 @@ To enable OpenCode to directly interact with Bangumi,
 - [ ] Database
   - [x] Migrate aggregate storage to SQLite
   - [ ] Add schema migrations for future SQLite changes
+- [ ] Search
+  - [x] Add LanceDB-backed semantic search index
 - [ ] Bangumi integration
   - [ ] Synchronize missing Bangumi collections to local catalog
 - [ ] Torrent management

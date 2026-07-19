@@ -3,12 +3,22 @@ from __future__ import annotations
 import json
 import tempfile
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
+import lancedb
+import pyarrow as pa
 from pydantic import TypeAdapter
 
 from config import SearchConfig
-from lib.models.search import SearchIndex, SearchQueryCache
+from lib.models.search import (
+    AggregateSearchDocument,
+    SearchIndex,
+    SearchQueryCache,
+    SearchQueryCacheEntry,
+)
+
+DOCUMENTS_TABLE = "aggregate_search_documents"
+QUERIES_TABLE = "aggregate_search_queries"
 
 
 class SearchRepository(Protocol):
@@ -64,3 +74,137 @@ class JsonSearchRepository:
         finally:
             if temp_path.exists():
                 temp_path.unlink()
+
+
+class LanceDbSearchRepository:
+    def __init__(self, config: SearchConfig):
+        self.config = config
+
+    def load_index(self) -> SearchIndex:
+        rows = self.table_rows(DOCUMENTS_TABLE)
+        documents = [
+            AggregateSearchDocument(
+                aggregate_short_name=str(row["aggregate_short_name"]),
+                source_text=str(row["source_text"]),
+                source_hash=str(row["source_hash"]),
+                embedding=[float(value) for value in row["vector"]],
+                model_name=str(row["model_name"]),
+                updated_at=str(row["updated_at"]),
+            )
+            for row in rows
+            if row.get("embedding_model") == self.config.embedding_model
+        ]
+        return SearchIndex(
+            embedding_model=self.config.embedding_model,
+            documents=sorted(
+                documents,
+                key=lambda document: document.aggregate_short_name.lower(),
+            ),
+        )
+
+    def save_index(self, index: SearchIndex) -> None:
+        rows: list[dict[str, object]] = [
+            {
+                "version": index.version,
+                "embedding_model": index.embedding_model,
+                "aggregate_short_name": document.aggregate_short_name,
+                "source_text": document.source_text,
+                "source_hash": document.source_hash,
+                "vector": document.embedding,
+                "model_name": document.model_name,
+                "updated_at": document.updated_at,
+            }
+            for document in index.documents
+        ]
+        self.replace_table(DOCUMENTS_TABLE, rows, document_schema())
+
+    def load_query_cache(self) -> SearchQueryCache:
+        rows = self.table_rows(QUERIES_TABLE)
+        queries = [
+            SearchQueryCacheEntry(
+                query=str(row["query"]),
+                query_hash=str(row["query_hash"]),
+                embedding=[float(value) for value in row["vector"]],
+                model_name=str(row["model_name"]),
+                updated_at=str(row["updated_at"]),
+            )
+            for row in rows
+            if row.get("embedding_model") == self.config.embedding_model
+        ]
+        return SearchQueryCache(
+            embedding_model=self.config.embedding_model,
+            queries=sorted(queries, key=lambda entry: entry.query),
+        )
+
+    def save_query_cache(self, cache: SearchQueryCache) -> None:
+        rows: list[dict[str, object]] = [
+            {
+                "version": cache.version,
+                "embedding_model": cache.embedding_model,
+                "query": entry.query,
+                "query_hash": entry.query_hash,
+                "vector": entry.embedding,
+                "model_name": entry.model_name,
+                "updated_at": entry.updated_at,
+            }
+            for entry in cache.queries
+        ]
+        self.replace_table(QUERIES_TABLE, rows, query_schema())
+
+    def table_rows(self, name: str) -> list[dict[str, Any]]:
+        db = self.connect()
+        if name not in db.list_tables().tables:
+            return []
+        return list(db.open_table(name).to_arrow().to_pylist())
+
+    def replace_table(
+        self,
+        name: str,
+        rows: list[dict[str, object]],
+        schema: pa.Schema,
+    ) -> None:
+        db = self.connect()
+        db.create_table(name, data=rows, schema=schema, mode="overwrite")
+
+    def connect(self) -> Any:
+        self.config.lancedb_path.mkdir(parents=True, exist_ok=True)
+        return lancedb.connect(str(self.config.lancedb_path))
+
+
+def create_search_repository(config: SearchConfig) -> SearchRepository:
+    match config.backend:
+        case "json":
+            return JsonSearchRepository(config)
+        case "lancedb":
+            return LanceDbSearchRepository(config)
+        case _:
+            raise ValueError(f"Unsupported SEARCH_BACKEND: {config.backend}")
+
+
+def document_schema() -> pa.Schema:
+    return pa.schema(
+        [
+            pa.field("version", pa.int64()),
+            pa.field("embedding_model", pa.string()),
+            pa.field("aggregate_short_name", pa.string()),
+            pa.field("source_text", pa.string()),
+            pa.field("source_hash", pa.string()),
+            pa.field("vector", pa.list_(pa.float32())),
+            pa.field("model_name", pa.string()),
+            pa.field("updated_at", pa.string()),
+        ]
+    )
+
+
+def query_schema() -> pa.Schema:
+    return pa.schema(
+        [
+            pa.field("version", pa.int64()),
+            pa.field("embedding_model", pa.string()),
+            pa.field("query", pa.string()),
+            pa.field("query_hash", pa.string()),
+            pa.field("vector", pa.list_(pa.float32())),
+            pa.field("model_name", pa.string()),
+            pa.field("updated_at", pa.string()),
+        ]
+    )

@@ -128,7 +128,9 @@ def search_aggregates(
 
     Use this for fuzzy semantic discovery, vague descriptions, translated title
     fragments, or cross-language title search. For exact torrent hashes or known
-    SQLite GLOB patterns, use list_aggregates instead.
+    SQLite GLOB patterns, use list_aggregates instead. Requires an initialized
+    search index; run `uv run ./src/main.py -- search --rebuild-index` from the
+    CLI first.
     """
     config = get_config()
     manager = AggregateService(config)
