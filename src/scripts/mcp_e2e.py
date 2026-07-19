@@ -246,6 +246,62 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
                 ],
             )
 
+            logger.info("test step: list all aggregates without filters")
+            listed_all = await call_tool(client, "list_aggregates", {})
+            all_aggregates = (
+                ResponsePayload[list[Aggregate]].model_validate(listed_all).data
+            )
+            self.assertEqual(
+                all_aggregates,
+                [
+                    expected_aggregate(
+                        INITIAL_HASHES,
+                        all_aggregates[0].bangumi_subjects[0].last_updated_at,
+                    )
+                ],
+            )
+
+            logger.info("test step: list aggregate by torrent hash")
+            listed_by_hash = await call_tool(
+                client,
+                "list_aggregates",
+                {"filter_torrent_hashes": [INITIAL_HASHES[0]]},
+            )
+            hash_matches = (
+                ResponsePayload[list[Aggregate]].model_validate(listed_by_hash).data
+            )
+            self.assertEqual(
+                hash_matches,
+                [
+                    expected_aggregate(
+                        INITIAL_HASHES,
+                        hash_matches[0].bangumi_subjects[0].last_updated_at,
+                    )
+                ],
+            )
+
+            logger.info("test step: list aggregate by Bangumi GLOB filters")
+            listed_by_subject = await call_tool(
+                client,
+                "list_aggregates",
+                {
+                    "filter_bangumi_subject_name": ["*Subject"],
+                    "filter_bangumi_subject_cn_name": ["*中文名"],
+                },
+            )
+            subject_matches = (
+                ResponsePayload[list[Aggregate]].model_validate(listed_by_subject).data
+            )
+            self.assertEqual(
+                subject_matches,
+                [
+                    expected_aggregate(
+                        INITIAL_HASHES,
+                        subject_matches[0].bangumi_subjects[0].last_updated_at,
+                    )
+                ],
+            )
+
             logger.info("test step: add a new torrent")
             after_add = await call_tool(
                 client,

@@ -98,11 +98,11 @@ def list_aggregates(
     filter_bangumi_subject_name: list[str] | None = None,
     filter_bangumi_subject_cn_name: list[str] | None = None,
 ) -> ResponsePayload[list[Aggregate]]:
-    """List aggregates with deterministic filters.
+    """List aggregates, optionally narrowed by deterministic filters.
 
-    Use this when you know exact torrent hashes or wildcard patterns for aggregate
-    short names, Bangumi original names, or Bangumi Chinese names. At least one
-    filter argument is required. For natural-language discovery, use
+    Omit filters to list all aggregates. Use filters when you know exact torrent
+    hashes or SQLite GLOB patterns for aggregate short names, Bangumi original
+    names, or Bangumi Chinese names. For natural-language discovery, use
     search_aggregates instead.
     """
     manager = AggregateService(get_config())
@@ -128,7 +128,7 @@ def search_aggregates(
 
     Use this for fuzzy semantic discovery, vague descriptions, translated title
     fragments, or cross-language title search. For exact torrent hashes or known
-    wildcard patterns, use list_aggregates instead.
+    SQLite GLOB patterns, use list_aggregates instead.
     """
     config = get_config()
     manager = AggregateService(config)

@@ -4,11 +4,10 @@ import json
 import uuid
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
-from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Protocol
 
-from sqlalchemy import ForeignKey, String, Text, create_engine, delete, event, select
+from sqlalchemy import ForeignKey, String, Text, create_engine, delete, event, or_, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -19,6 +18,7 @@ from sqlalchemy.orm import (
     selectinload,
     sessionmaker,
 )
+from sqlalchemy.sql.elements import ColumnElement
 
 from lib.models.aggregates import Aggregate, Torrent
 from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot
@@ -254,13 +254,50 @@ class SqliteAggregateRepository:
         bangumi_subject_name_patterns: list[str] | None = None,
         bangumi_subject_cn_name_patterns: list[str] | None = None,
     ) -> list[Aggregate]:
-        return filter_aggregates(
-            self.list_all(),
-            short_name_patterns,
-            torrent_hashes,
-            bangumi_subject_name_patterns,
-            bangumi_subject_cn_name_patterns,
+        short_name_patterns = short_name_patterns or []
+        torrent_hashes = torrent_hashes or []
+        bangumi_subject_name_patterns = bangumi_subject_name_patterns or []
+        bangumi_subject_cn_name_patterns = bangumi_subject_cn_name_patterns or []
+        conditions: list[ColumnElement[bool]] = []
+
+        conditions.extend(
+            AggregateRow.short_name.op("GLOB")(pattern)
+            for pattern in short_name_patterns
         )
+        if torrent_hashes:
+            conditions.append(
+                AggregateRow.torrents.any(TorrentRow.hash.in_(torrent_hashes))
+            )
+        conditions.extend(
+            AggregateRow.subject_links.any(
+                AggregateBangumiSubjectRow.subject.has(
+                    BangumiSubjectRow.name.op("GLOB")(pattern)
+                )
+            )
+            for pattern in bangumi_subject_name_patterns
+        )
+        conditions.extend(
+            AggregateRow.subject_links.any(
+                AggregateBangumiSubjectRow.subject.has(
+                    BangumiSubjectRow.name_cn.op("GLOB")(pattern)
+                )
+            )
+            for pattern in bangumi_subject_cn_name_patterns
+        )
+
+        if not conditions:
+            return self.list_all()
+
+        session = self.require_session()
+        rows = list(
+            session.scalars(
+                select(AggregateRow)
+                .where(or_(*conditions))
+                .options(*aggregate_load_options())
+                .order_by(AggregateRow.short_name)
+            )
+        )
+        return [aggregate_from_row(row) for row in rows]
 
     def add(self, aggregate: Aggregate) -> None:
         if self.session is None:
@@ -441,49 +478,3 @@ def upsert_subject_row(session: Session, subject: BangumiSubject) -> BangumiSubj
         )
         subject_row.updated_at = subject.last_updated_at
     return subject_row
-
-
-def filter_aggregates(
-    aggregates: list[Aggregate],
-    short_name_patterns: list[str] | None = None,
-    torrent_hashes: list[str] | None = None,
-    bangumi_subject_name_patterns: list[str] | None = None,
-    bangumi_subject_cn_name_patterns: list[str] | None = None,
-) -> list[Aggregate]:
-    short_name_patterns = short_name_patterns or []
-    torrent_hashes = torrent_hashes or []
-    bangumi_subject_name_patterns = bangumi_subject_name_patterns or []
-    bangumi_subject_cn_name_patterns = bangumi_subject_cn_name_patterns or []
-    filter_torrent_hash_set = set(torrent_hashes)
-    matches = []
-    for aggregate in aggregates:
-        short_name_matches = any(
-            fnmatch(aggregate.short_name, pattern) for pattern in short_name_patterns
-        )
-        torrent_hash_matches = any(
-            torrent.hash in filter_torrent_hash_set for torrent in aggregate.torrents
-        )
-        bangumi_subject_name_matches = any(
-            subject.snapshot
-            and any(
-                fnmatch(subject.snapshot.name, pattern)
-                for pattern in bangumi_subject_name_patterns
-            )
-            for subject in aggregate.bangumi_subjects
-        )
-        bangumi_subject_cn_name_matches = any(
-            subject.snapshot
-            and any(
-                fnmatch(subject.snapshot.name_cn, pattern)
-                for pattern in bangumi_subject_cn_name_patterns
-            )
-            for subject in aggregate.bangumi_subjects
-        )
-        if (
-            short_name_matches
-            or torrent_hash_matches
-            or bangumi_subject_name_matches
-            or bangumi_subject_cn_name_matches
-        ):
-            matches.append(aggregate)
-    return matches
