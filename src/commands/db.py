@@ -44,7 +44,8 @@ def import_json(
     aggregates = load_json_aggregates(json_path)
     validate_aggregates(aggregates)
     sqlite_repo = SqliteAggregateRepository(sqlite_path)
-    sqlite_repo.import_all(aggregates)
+    with sqlite_repo.get_repository(write=True) as repo:
+        repo.import_all(aggregates)
     click.echo(f"Imported {len(aggregates)} aggregates into {sqlite_path}")
 
 
@@ -61,7 +62,9 @@ def validate(config: Config, path: Path | None) -> None:
     """Validate aggregate uniqueness and SQLite loadability."""
     selected_path = path or config.database.path
     require_existing_file(selected_path, "SQLite database")
-    aggregates = SqliteAggregateRepository(selected_path, create=False).list_all()
+    sqlite_repo = SqliteAggregateRepository(selected_path, create=False)
+    with sqlite_repo.get_repository(write=False) as repo:
+        aggregates = repo.list_all()
     validate_aggregates(aggregates)
 
     torrent_count = sum(len(aggregate.torrents) for aggregate in aggregates)

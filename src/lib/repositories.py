@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Iterator
+from contextlib import AbstractContextManager, contextmanager
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Protocol
@@ -23,6 +25,9 @@ from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot
 
 
 class AggregateRepository(Protocol):
+    def get_repository(self, *, write: bool) -> AbstractContextManager[AggregateRepository]:
+        ...
+
     def list_all(self) -> list[Aggregate]: ...
 
     def get_by_short_name(self, short_name: str) -> Aggregate | None: ...
@@ -129,8 +134,19 @@ def enable_sqlite_foreign_keys(
 
 
 class SqliteAggregateRepository:
-    def __init__(self, db_path: str | Path, create: bool = True):
+    def __init__(
+        self,
+        db_path: str | Path,
+        create: bool = True,
+        session: Session | None = None,
+    ):
         self.db_path = Path(db_path)
+        self.session = session
+        self.engine: Engine | None = None
+        self.session_factory: sessionmaker[Session] | None = None
+        if session is not None:
+            return
+
         if not create and not self.db_path.exists():
             raise FileNotFoundError(f"SQLite database not found: {self.db_path}")
         if create:
@@ -141,50 +157,95 @@ class SqliteAggregateRepository:
             self.initialize()
 
     def initialize(self) -> None:
+        if self.engine is None:
+            raise RuntimeError("Cannot initialize a session-bound repository.")
         Base.metadata.create_all(self.engine)
 
-    def list_all(self) -> list[Aggregate]:
+    @contextmanager
+    def get_repository(self, *, write: bool) -> Iterator[SqliteAggregateRepository]:
+        if self.session_factory is None:
+            raise RuntimeError("Cannot open a repository from a session-bound repository.")
+
         with self.session_factory() as session:
-            rows = list(
-                session.scalars(
-                    select(AggregateRow)
-                    .options(*aggregate_load_options())
-                    .order_by(AggregateRow.short_name)
+            if write:
+                session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            try:
+                yield SqliteAggregateRepository(
+                    self.db_path,
+                    create=False,
+                    session=session,
                 )
+            except Exception:
+                if write:
+                    session.rollback()
+                raise
+            else:
+                if write:
+                    session.commit()
+
+    def require_session(self) -> Session:
+        if self.session is None:
+            raise RuntimeError("Repository method requires an active session.")
+        return self.session
+
+    def list_all(self) -> list[Aggregate]:
+        if self.session is None:
+            with self.get_repository(write=False) as repo:
+                return repo.list_all()
+
+        session = self.require_session()
+        rows = list(
+            session.scalars(
+                select(AggregateRow)
+                .options(*aggregate_load_options())
+                .order_by(AggregateRow.short_name)
             )
-            return [aggregate_from_row(row) for row in rows]
+        )
+        return [aggregate_from_row(row) for row in rows]
 
     def get_by_short_name(self, short_name: str) -> Aggregate | None:
-        with self.session_factory() as session:
-            row = session.scalar(
-                select(AggregateRow)
-                .where(AggregateRow.short_name == short_name)
-                .options(*aggregate_load_options())
-            )
-            return aggregate_from_row(row) if row else None
+        if self.session is None:
+            with self.get_repository(write=False) as repo:
+                return repo.get_by_short_name(short_name)
+
+        session = self.require_session()
+        row = session.scalar(
+            select(AggregateRow)
+            .where(AggregateRow.short_name == short_name)
+            .options(*aggregate_load_options())
+        )
+        return aggregate_from_row(row) if row else None
 
     def get_by_torrent_hash(self, torrent_hash: str) -> Aggregate | None:
-        with self.session_factory() as session:
-            row = session.scalar(
-                select(AggregateRow)
-                .join(TorrentRow)
-                .where(TorrentRow.hash == torrent_hash)
-                .options(*aggregate_load_options())
-            )
-            return aggregate_from_row(row) if row else None
+        if self.session is None:
+            with self.get_repository(write=False) as repo:
+                return repo.get_by_torrent_hash(torrent_hash)
+
+        session = self.require_session()
+        row = session.scalar(
+            select(AggregateRow)
+            .join(TorrentRow)
+            .where(TorrentRow.hash == torrent_hash)
+            .options(*aggregate_load_options())
+        )
+        return aggregate_from_row(row) if row else None
 
     def get_by_bangumi_subject_id(self, subject_id: int) -> list[Aggregate]:
-        with self.session_factory() as session:
-            rows = list(
-                session.scalars(
-                    select(AggregateRow)
-                    .join(AggregateBangumiSubjectRow)
-                    .where(AggregateBangumiSubjectRow.subject_id == subject_id)
-                    .options(*aggregate_load_options())
-                    .order_by(AggregateRow.short_name)
-                )
+        if self.session is None:
+            with self.get_repository(write=False) as repo:
+                return repo.get_by_bangumi_subject_id(subject_id)
+
+        session = self.require_session()
+        rows = list(
+            session.scalars(
+                select(AggregateRow)
+                .join(AggregateBangumiSubjectRow)
+                .where(AggregateBangumiSubjectRow.subject_id == subject_id)
+                .options(*aggregate_load_options())
+                .order_by(AggregateRow.short_name)
             )
-            return [aggregate_from_row(row) for row in rows]
+        )
+        return [aggregate_from_row(row) for row in rows]
 
     def find(
         self,
@@ -202,62 +263,84 @@ class SqliteAggregateRepository:
         )
 
     def add(self, aggregate: Aggregate) -> None:
-        with self.session_factory.begin() as session:
-            session.add(row_from_aggregate(aggregate, session))
+        if self.session is None:
+            with self.get_repository(write=True) as repo:
+                repo.add(aggregate)
+            return
+
+        session = self.require_session()
+        session.add(row_from_aggregate(aggregate, session))
 
     def update_torrents(self, short_name: str, torrents: list[Torrent]) -> None:
-        with self.session_factory.begin() as session:
-            aggregate_id = aggregate_id_for_short_name(session, short_name)
-            session.execute(
-                delete(TorrentRow).where(TorrentRow.aggregate_id == aggregate_id)
-            )
-            session.add_all(
-                TorrentRow(hash=torrent.hash, aggregate_id=aggregate_id)
-                for torrent in sorted(torrents, key=lambda item: item.hash)
-            )
+        if self.session is None:
+            with self.get_repository(write=True) as repo:
+                repo.update_torrents(short_name, torrents)
+            return
+
+        session = self.require_session()
+        aggregate_id = aggregate_id_for_short_name(session, short_name)
+        session.execute(delete(TorrentRow).where(TorrentRow.aggregate_id == aggregate_id))
+        session.add_all(
+            TorrentRow(hash=torrent.hash, aggregate_id=aggregate_id)
+            for torrent in sorted(torrents, key=lambda item: item.hash)
+        )
 
     def update_bangumi_subjects(
         self,
         short_name: str,
         subjects: list[BangumiSubject],
     ) -> None:
-        with self.session_factory.begin() as session:
-            aggregate_id = aggregate_id_for_short_name(session, short_name)
-            session.execute(
-                delete(AggregateBangumiSubjectRow).where(
-                    AggregateBangumiSubjectRow.aggregate_id == aggregate_id
+        if self.session is None:
+            with self.get_repository(write=True) as repo:
+                repo.update_bangumi_subjects(short_name, subjects)
+            return
+
+        session = self.require_session()
+        aggregate_id = aggregate_id_for_short_name(session, short_name)
+        session.execute(
+            delete(AggregateBangumiSubjectRow).where(
+                AggregateBangumiSubjectRow.aggregate_id == aggregate_id
+            )
+        )
+        for subject in subjects:
+            upsert_subject_row(session, subject)
+            session.add(
+                AggregateBangumiSubjectRow(
+                    aggregate_id=aggregate_id,
+                    subject_id=subject.subject_id,
                 )
             )
-            for subject in subjects:
-                upsert_subject_row(session, subject)
-                session.add(
-                    AggregateBangumiSubjectRow(
-                        aggregate_id=aggregate_id,
-                        subject_id=subject.subject_id,
-                    )
-                )
 
     def import_all(self, aggregates: list[Aggregate]) -> None:
-        with self.session_factory.begin() as session:
-            session.execute(delete(TorrentRow))
-            session.execute(delete(AggregateBangumiSubjectRow))
-            session.execute(delete(AggregateRow))
-            session.execute(delete(BangumiSubjectRow))
-            for aggregate in aggregates:
-                session.add(row_from_aggregate(aggregate, session))
+        if self.session is None:
+            with self.get_repository(write=True) as repo:
+                repo.import_all(aggregates)
+            return
+
+        session = self.require_session()
+        session.execute(delete(TorrentRow))
+        session.execute(delete(AggregateBangumiSubjectRow))
+        session.execute(delete(AggregateRow))
+        session.execute(delete(BangumiSubjectRow))
+        for aggregate in aggregates:
+            session.add(row_from_aggregate(aggregate, session))
 
     def remove_by_short_name(self, short_name: str) -> Aggregate | None:
-        with self.session_factory.begin() as session:
-            row = session.scalar(
-                select(AggregateRow)
-                .where(AggregateRow.short_name == short_name)
-                .options(*aggregate_load_options())
-            )
-            if row is None:
-                return None
-            aggregate = aggregate_from_row(row)
-            session.delete(row)
-            return aggregate
+        if self.session is None:
+            with self.get_repository(write=True) as repo:
+                return repo.remove_by_short_name(short_name)
+
+        session = self.require_session()
+        row = session.scalar(
+            select(AggregateRow)
+            .where(AggregateRow.short_name == short_name)
+            .options(*aggregate_load_options())
+        )
+        if row is None:
+            return None
+        aggregate = aggregate_from_row(row)
+        session.delete(row)
+        return aggregate
 
 
 def aggregate_load_options():
