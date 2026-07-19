@@ -53,8 +53,6 @@ def fake_embedding(text: str) -> list[float]:
 
 class BaseSearchE2ETest(unittest.TestCase):
     temp_dir: tempfile.TemporaryDirectory[str]
-    index_path: Path
-    query_cache_path: Path
     lancedb_path: Path
     config: SearchConfig
 
@@ -62,24 +60,19 @@ class BaseSearchE2ETest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory(prefix="bonsai-search-e2e-")
         temp_path = Path(self.temp_dir.name)
-        self.index_path = temp_path / "aggregate_search_index.json"
-        self.query_cache_path = temp_path / "aggregate_search_query_cache.json"
         self.lancedb_path = temp_path / "aggregate_search.lancedb"
         self.config = SearchConfig(
-            backend="json",
-            index_path=self.index_path,
-            query_cache_path=self.query_cache_path,
             lancedb_path=self.lancedb_path,
             embedding_model="fake-e2e-model",
             embedding_query_prompt_model_marker="",
             embedding_device="cpu",
         )
-        logger.info("prepared temporary search sidecars: %s", temp_path)
+        logger.info("prepared temporary search store: %s", temp_path)
 
     @override
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
-        logger.info("cleaned up temporary search sidecars")
+        logger.info("cleaned up temporary search store")
 
     def aggregate_fixtures(self) -> list[Aggregate]:
         return [
@@ -119,18 +112,16 @@ class BaseSearchE2ETest(unittest.TestCase):
             ),
         ]
 
-    def assert_search_sidecars_written(self) -> None:
-        self.assertTrue(self.index_path.is_file())
-        self.assertTrue(self.query_cache_path.is_file())
+    def assert_search_store_written(self) -> None:
+        self.assertTrue(self.lancedb_path.is_dir())
 
     def assert_indexed_aggregates(
         self,
         manager: AggregateSearchManager,
         expected_short_names: list[str],
     ) -> None:
-        index = manager.load_index()
         self.assertEqual(
-            [document.aggregate_short_name for document in index.documents],
+            [document.aggregate_short_name for document in manager.list_documents()],
             expected_short_names,
         )
 
@@ -145,7 +136,7 @@ class BaseSearchE2ETest(unittest.TestCase):
 
 class MockedSearchE2ETest(BaseSearchE2ETest):
     def test_fake_embedding_search_index_and_cache_flow(self) -> None:
-        logger.info("test step: initialize deterministic search index")
+        logger.info("test step: initialize deterministic LanceDB search index")
         manager = FakeSearchManager(self.config)
         manager.rebuild(self.aggregate_fixtures())
 
@@ -154,20 +145,22 @@ class MockedSearchE2ETest(BaseSearchE2ETest):
             self.aggregate_fixtures(),
             "alpha",
             limit=2,
-            threshold=1.5,
+            threshold=0.75,
         )
 
         self.assertEqual([result.aggregate.short_name for result in results], ["Alpha"])
-        self.assert_search_sidecars_written()
+        self.assert_search_store_written()
         self.assertEqual(manager.encode_call_count, 2)
         self.assertEqual(manager.encoded_text_count, 3)
 
-        logger.info("test step: verify repeated search reuses document index and query cache")
+        logger.info(
+            "test step: verify repeated search reuses document index and query cache"
+        )
         second_results = manager.search(
             self.aggregate_fixtures(),
             "alpha",
             limit=2,
-            threshold=1.5,
+            threshold=0.75,
         )
 
         self.assertEqual(
@@ -186,7 +179,7 @@ class MockedSearchE2ETest(BaseSearchE2ETest):
             self.aggregate_fixtures(),
             "alpha",
             limit=2,
-            threshold=1.5,
+            threshold=0.75,
         )
 
         self.assertEqual(
@@ -196,34 +189,8 @@ class MockedSearchE2ETest(BaseSearchE2ETest):
         self.assertEqual(manager.encode_call_count, 3)
         self.assertEqual(manager.encoded_text_count, 5)
 
-        index = manager.load_index()
         query_cache = manager.load_query_cache()
-        self.assertEqual(index.embedding_model, "fake-e2e-model")
         self.assertEqual(query_cache.embedding_model, "fake-e2e-model")
-        self.assert_indexed_aggregates(manager, ["Alpha", "Beta"])
-        self.assert_cached_queries(manager, ["alpha"])
-
-
-class LanceDbSearchE2ETest(BaseSearchE2ETest):
-    def test_lancedb_repository_index_and_cache_flow(self) -> None:
-        logger.info("test step: run deterministic LanceDB-backed search")
-        config = replace(
-            self.config,
-            backend="lancedb",
-            lancedb_path=self.lancedb_path,
-        )
-        manager = FakeSearchManager(config)
-        manager.rebuild(self.aggregate_fixtures())
-
-        results = manager.search(
-            self.aggregate_fixtures(),
-            "alpha",
-            limit=2,
-            threshold=1.5,
-        )
-
-        self.assertEqual([result.aggregate.short_name for result in results], ["Alpha"])
-        self.assertTrue(self.lancedb_path.is_dir())
         self.assert_indexed_aggregates(manager, ["Alpha", "Beta"])
         self.assert_cached_queries(manager, ["alpha"])
 
@@ -241,8 +208,6 @@ class SearchE2ETest(BaseSearchE2ETest):
         base_search_config = self.base_config.search
         search_config = replace(
             base_search_config,
-            index_path=self.index_path,
-            query_cache_path=self.query_cache_path,
             lancedb_path=self.lancedb_path,
             embedding_device=self.device_override
             or base_search_config.embedding_device,
@@ -256,16 +221,13 @@ class SearchE2ETest(BaseSearchE2ETest):
         results = manager.search(aggregates, "alpha subject", limit=2)
 
         self.assertTrue(results)
-        if search_config.backend == "lancedb":
-            self.assertTrue(self.lancedb_path.is_dir())
-        else:
-            self.assert_search_sidecars_written()
+        self.assert_search_store_written()
 
-        index = manager.load_index()
         query_cache = manager.load_query_cache()
-        self.assertEqual(len(index.documents), len(aggregates))
+        documents = manager.list_documents()
+        self.assertEqual(len(documents), len(aggregates))
         self.assertEqual(len(query_cache.queries), 1)
-        dimensions = {len(document.embedding) for document in index.documents}
+        dimensions = {len(document.embedding) for document in documents}
         dimensions.add(len(query_cache.queries[0].embedding))
         self.assertEqual(len(dimensions), 1)
         self.assertGreater(next(iter(dimensions)), 0)
@@ -301,7 +263,6 @@ def search_e2e(
 
     suite = unittest.TestSuite()
     suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(MockedSearchE2ETest))
-    suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(LanceDbSearchE2ETest))
     if no_mock_embedding:
         suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(SearchE2ETest))
 

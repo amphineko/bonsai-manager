@@ -130,7 +130,7 @@ def search_aggregates(
     fragments, or cross-language title search. For exact torrent hashes or known
     SQLite GLOB patterns, use list_aggregates instead. Requires an initialized
     search index; run `uv run ./src/main.py -- search --rebuild-index` from the
-    CLI first.
+    CLI first. The optional threshold is a minimum cosine similarity score.
     """
     config = get_config()
     manager = AggregateService(config)

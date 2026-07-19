@@ -14,10 +14,9 @@ class AggregateSearchDocument(BaseModel):
     updated_at: str
 
 
-class SearchIndex(BaseModel):
-    version: int = 1
-    embedding_model: str
-    documents: List[AggregateSearchDocument] = Field(default_factory=list)
+class SearchDocumentMatch(BaseModel):
+    aggregate_short_name: str
+    score: float
 
 
 class SearchQueryCacheEntry(BaseModel):

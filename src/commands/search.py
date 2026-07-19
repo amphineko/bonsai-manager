@@ -25,7 +25,12 @@ def format_bangumi_names(entry: Aggregate) -> str:
 @click.command(name="search")
 @click.argument("query_parts", nargs=-1, required=False)
 @click.option("--limit", "-n", default=10, show_default=True, help="Maximum results.")
-@click.option("--threshold", type=float, default=None, help="Minimum similarity score.")
+@click.option(
+    "--threshold",
+    type=float,
+    default=None,
+    help="Minimum cosine similarity score.",
+)
 @click.option(
     "--init",
     "rebuild_index",
@@ -85,12 +90,12 @@ def search_aggregates(
         local_files_only=not allow_download,
     )
     if rebuild_index:
-        index = search_manager.rebuild(
+        documents = search_manager.rebuild(
             entries,
             force=force_rebuild,
             show_progress=True,
         )
-        click.echo(f"Rebuilt search index with {len(index.documents)} aggregates.")
+        click.echo(f"Rebuilt search index with {len(documents)} aggregates.")
         return
 
     results = search_manager.search(

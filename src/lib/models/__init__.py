@@ -15,9 +15,9 @@ from lib.models.search import (
     AggregateSearchDocument,
     AggregateSearchResult,
     AggregateSearchResults,
+    SearchDocumentMatch,
     SearchQueryCache,
     SearchQueryCacheEntry,
-    SearchIndex,
 )
 
 
@@ -42,7 +42,7 @@ __all__ = [
     "QbittorrentTorrent",
     "QbittorrentTorrentFile",
     "ResponsePayload",
-    "SearchIndex",
+    "SearchDocumentMatch",
     "SearchQueryCache",
     "SearchQueryCacheEntry",
     "Torrent",

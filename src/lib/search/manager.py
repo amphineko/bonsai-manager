@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import math
 from datetime import datetime
 
 from sentence_transformers import SentenceTransformer
@@ -12,11 +11,10 @@ from lib.models.aggregates import Aggregate
 from lib.models.search import (
     AggregateSearchDocument,
     AggregateSearchResult,
-    SearchIndex,
     SearchQueryCache,
     SearchQueryCacheEntry,
 )
-from lib.search.repositories import SearchRepository, create_search_repository
+from lib.search.repositories import LanceDbSearchRepository, SearchRepository
 
 
 class AggregateSearchManager:
@@ -27,7 +25,7 @@ class AggregateSearchManager:
         repository: SearchRepository | None = None,
     ):
         self.config = config
-        self.repository = repository or create_search_repository(config)
+        self.repository = repository or LanceDbSearchRepository(config)
         self.local_files_only = local_files_only
         self._model: SentenceTransformer | None = None
 
@@ -41,11 +39,8 @@ class AggregateSearchManager:
             )
         return self._model
 
-    def load_index(self) -> SearchIndex:
-        return self.repository.load_index()
-
-    def save_index(self, index: SearchIndex) -> None:
-        self.repository.save_index(index)
+    def list_documents(self) -> list[AggregateSearchDocument]:
+        return self.repository.list_documents()
 
     def load_query_cache(self) -> SearchQueryCache:
         return self.repository.load_query_cache()
@@ -155,12 +150,11 @@ class AggregateSearchManager:
         aggregates: list[Aggregate],
         force: bool = False,
         show_progress: bool = False,
-    ) -> SearchIndex:
-        old_index = self.load_index()
+    ) -> list[AggregateSearchDocument]:
+        existing_documents = self.repository.list_documents()
         old_documents = {
             document.aggregate_short_name: document
-            for document in old_index.documents
-            if old_index.embedding_model == self.config.embedding_model
+            for document in existing_documents
         }
 
         new_documents: list[AggregateSearchDocument] = []
@@ -211,16 +205,12 @@ class AggregateSearchManager:
                     )
                 )
 
-        index = SearchIndex(
-            version=1,
-            embedding_model=self.config.embedding_model,
-            documents=sorted(
-                new_documents,
-                key=lambda document: document.aggregate_short_name.lower(),
-            ),
+        documents = sorted(
+            new_documents,
+            key=lambda document: document.aggregate_short_name.lower(),
         )
-        self.save_index(index)
-        return index
+        self.repository.replace_documents(documents)
+        return documents
 
     def search(
         self,
@@ -230,8 +220,7 @@ class AggregateSearchManager:
         threshold: float | None = None,
         show_progress: bool = False,
     ) -> list[AggregateSearchResult]:
-        index = self.load_index()
-        if not index.documents:
+        if not self.repository.list_documents():
             raise ValueError("Search index is empty. Run `search --rebuild-index` first.")
         aggregate_by_short_name = {
             aggregate.short_name: aggregate for aggregate in aggregates
@@ -242,28 +231,14 @@ class AggregateSearchManager:
         )
 
         results = []
-        for document in index.documents:
-            aggregate = aggregate_by_short_name.get(document.aggregate_short_name)
+        for match in self.repository.search_documents(
+            query_embedding=query_embedding,
+            limit=limit,
+            threshold=threshold,
+        ):
+            aggregate = aggregate_by_short_name.get(match.aggregate_short_name)
             if aggregate is None:
                 continue
-            score = self.dot(query_embedding, document.embedding)
-            if threshold is None or score >= threshold:
-                results.append(AggregateSearchResult(aggregate=aggregate, score=score))
+            results.append(AggregateSearchResult(aggregate=aggregate, score=match.score))
 
-        results.sort(key=lambda result: result.score, reverse=True)
-        return results[:limit]
-
-    def dot(self, left: list[float], right: list[float]) -> float:
-        if not left or not right:
-            return 0.0
-        if len(left) != len(right):
-            return self.cosine(left, right)
-        return sum(a * b for a, b in zip(left, right))
-
-    def cosine(self, left: list[float], right: list[float]) -> float:
-        denominator = math.sqrt(sum(a * a for a in left)) * math.sqrt(
-            sum(b * b for b in right)
-        )
-        if denominator == 0:
-            return 0.0
-        return sum(a * b for a, b in zip(left, right)) / denominator
+        return results

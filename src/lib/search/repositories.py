@@ -1,18 +1,14 @@
 from __future__ import annotations
 
-import json
-import tempfile
-from pathlib import Path
 from typing import Any, Protocol
 
 import lancedb
 import pyarrow as pa
-from pydantic import TypeAdapter
 
 from config import SearchConfig
 from lib.models.search import (
     AggregateSearchDocument,
-    SearchIndex,
+    SearchDocumentMatch,
     SearchQueryCache,
     SearchQueryCacheEntry,
 )
@@ -22,91 +18,50 @@ QUERIES_TABLE = "aggregate_search_queries"
 
 
 class SearchRepository(Protocol):
-    def load_index(self) -> SearchIndex: ...
+    def list_documents(self) -> list[AggregateSearchDocument]: ...
 
-    def save_index(self, index: SearchIndex) -> None: ...
+    def replace_documents(self, documents: list[AggregateSearchDocument]) -> None: ...
+
+    def search_documents(
+        self,
+        query_embedding: list[float],
+        limit: int,
+        threshold: float | None = None,
+    ) -> list[SearchDocumentMatch]: ...
 
     def load_query_cache(self) -> SearchQueryCache: ...
 
     def save_query_cache(self, cache: SearchQueryCache) -> None: ...
 
 
-class JsonSearchRepository:
-    def __init__(self, config: SearchConfig):
-        self.config = config
-
-    def load_index(self) -> SearchIndex:
-        if not self.config.index_path.exists():
-            return SearchIndex(embedding_model=self.config.embedding_model)
-        with self.config.index_path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-        return TypeAdapter(SearchIndex).validate_python(data)
-
-    def save_index(self, index: SearchIndex) -> None:
-        self.write_json_atomic(self.config.index_path, index.model_dump())
-
-    def load_query_cache(self) -> SearchQueryCache:
-        if not self.config.query_cache_path.exists():
-            return SearchQueryCache(embedding_model=self.config.embedding_model)
-        with self.config.query_cache_path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-        return TypeAdapter(SearchQueryCache).validate_python(data)
-
-    def save_query_cache(self, cache: SearchQueryCache) -> None:
-        self.write_json_atomic(self.config.query_cache_path, cache.model_dump())
-
-    def write_json_atomic(self, path: Path, data: object) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temp_file = tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f"{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        )
-        temp_path = Path(temp_file.name)
-        try:
-            with temp_file:
-                json.dump(data, temp_file, ensure_ascii=False, indent=2)
-                temp_file.write("\n")
-            temp_path.replace(path)
-        finally:
-            if temp_path.exists():
-                temp_path.unlink()
-
-
 class LanceDbSearchRepository:
     def __init__(self, config: SearchConfig):
         self.config = config
 
-    def load_index(self) -> SearchIndex:
+    def list_documents(self) -> list[AggregateSearchDocument]:
         rows = self.table_rows(DOCUMENTS_TABLE)
-        documents = [
-            AggregateSearchDocument(
-                aggregate_short_name=str(row["aggregate_short_name"]),
-                source_text=str(row["source_text"]),
-                source_hash=str(row["source_hash"]),
-                embedding=[float(value) for value in row["vector"]],
-                model_name=str(row["model_name"]),
-                updated_at=str(row["updated_at"]),
-            )
-            for row in rows
-            if row.get("embedding_model") == self.config.embedding_model
-        ]
-        return SearchIndex(
-            embedding_model=self.config.embedding_model,
-            documents=sorted(
-                documents,
-                key=lambda document: document.aggregate_short_name.lower(),
-            ),
+        return sorted(
+            [
+                AggregateSearchDocument(
+                    aggregate_short_name=str(row["aggregate_short_name"]),
+                    source_text=str(row["source_text"]),
+                    source_hash=str(row["source_hash"]),
+                    embedding=[float(value) for value in row["vector"]],
+                    model_name=str(row["model_name"]),
+                    updated_at=str(row["updated_at"]),
+                )
+                for row in rows
+                if row.get("embedding_model") == self.config.embedding_model
+            ],
+            key=lambda document: document.aggregate_short_name.lower(),
         )
 
-    def save_index(self, index: SearchIndex) -> None:
+    def replace_documents(self, documents: list[AggregateSearchDocument]) -> None:
+        dimension = embedding_dimension(documents)
         rows: list[dict[str, object]] = [
             {
-                "version": index.version,
-                "embedding_model": index.embedding_model,
+                "version": 1,
+                "embedding_model": self.config.embedding_model,
                 "aggregate_short_name": document.aggregate_short_name,
                 "source_text": document.source_text,
                 "source_hash": document.source_hash,
@@ -114,9 +69,37 @@ class LanceDbSearchRepository:
                 "model_name": document.model_name,
                 "updated_at": document.updated_at,
             }
-            for document in index.documents
+            for document in documents
         ]
-        self.replace_table(DOCUMENTS_TABLE, rows, document_schema())
+        self.replace_table(DOCUMENTS_TABLE, rows, document_schema(dimension))
+
+    def search_documents(
+        self,
+        query_embedding: list[float],
+        limit: int,
+        threshold: float | None = None,
+    ) -> list[SearchDocumentMatch]:
+        db = self.connect()
+        if DOCUMENTS_TABLE not in db.list_tables().tables:
+            return []
+        rows = (
+            db.open_table(DOCUMENTS_TABLE)
+            .search(query_embedding, vector_column_name="vector")
+            .metric("cosine")
+            .limit(limit)
+            .to_list()
+        )
+        matches = [
+            SearchDocumentMatch(
+                aggregate_short_name=str(row["aggregate_short_name"]),
+                score=1.0 - float(row["_distance"]),
+            )
+            for row in rows
+            if row.get("embedding_model") == self.config.embedding_model
+        ]
+        if threshold is not None:
+            matches = [match for match in matches if match.score >= threshold]
+        return matches
 
     def load_query_cache(self) -> SearchQueryCache:
         rows = self.table_rows(QUERIES_TABLE)
@@ -171,17 +154,16 @@ class LanceDbSearchRepository:
         return lancedb.connect(str(self.config.lancedb_path))
 
 
-def create_search_repository(config: SearchConfig) -> SearchRepository:
-    match config.backend:
-        case "json":
-            return JsonSearchRepository(config)
-        case "lancedb":
-            return LanceDbSearchRepository(config)
-        case _:
-            raise ValueError(f"Unsupported SEARCH_BACKEND: {config.backend}")
+def embedding_dimension(documents: list[AggregateSearchDocument]) -> int:
+    dimensions = {len(document.embedding) for document in documents}
+    if not dimensions:
+        return 1
+    if len(dimensions) > 1:
+        raise ValueError("Search documents must use a single embedding dimension.")
+    return dimensions.pop()
 
 
-def document_schema() -> pa.Schema:
+def document_schema(dimension: int) -> pa.Schema:
     return pa.schema(
         [
             pa.field("version", pa.int64()),
@@ -189,7 +171,7 @@ def document_schema() -> pa.Schema:
             pa.field("aggregate_short_name", pa.string()),
             pa.field("source_text", pa.string()),
             pa.field("source_hash", pa.string()),
-            pa.field("vector", pa.list_(pa.float32())),
+            pa.field("vector", pa.list_(pa.float32(), dimension)),
             pa.field("model_name", pa.string()),
             pa.field("updated_at", pa.string()),
         ]

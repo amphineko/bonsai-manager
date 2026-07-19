@@ -21,7 +21,6 @@ QBIT_PORT=8080
 QBIT_USERNAME=admin
 QBIT_PASSWORD=adminadmin
 BANGUMI_TOKEN=
-SEARCH_BACKEND=lancedb
 ```
 
 ## Usage
