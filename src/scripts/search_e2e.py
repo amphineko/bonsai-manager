@@ -1,0 +1,264 @@
+#!/usr/bin/env -S uv run python
+from __future__ import annotations
+
+import logging
+import tempfile
+import unittest
+from dataclasses import replace
+from pathlib import Path
+from typing import override
+
+import click
+
+from config import Config, SearchConfig, load_config
+from lib.models.aggregates import Aggregate, Torrent
+from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot, BangumiTag
+from lib.search import AggregateSearchManager, JsonSearchRepository
+
+logger = logging.getLogger(__name__)
+
+
+class FakeSearchManager(AggregateSearchManager):
+    def __init__(self, config: SearchConfig):
+        super().__init__(config=config, repository=JsonSearchRepository(config))
+        self.encode_call_count = 0
+        self.encoded_text_count = 0
+
+    @override
+    def encode(self, texts: list[str], is_query: bool) -> list[list[float]]:
+        self.encode_call_count += 1
+        self.encoded_text_count += len(texts)
+        return [fake_embedding(text) for text in texts]
+
+
+def fake_embedding(text: str) -> list[float]:
+    lower_text = text.lower()
+    return [
+        1.0 if "alpha" in lower_text else 0.0,
+        1.0 if "beta" in lower_text else 0.0,
+        1.0,
+    ]
+
+
+class BaseSearchE2ETest(unittest.TestCase):
+    temp_dir: tempfile.TemporaryDirectory[str]
+    index_path: Path
+    query_cache_path: Path
+    config: SearchConfig
+
+    @override
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory(prefix="bonsai-search-e2e-")
+        temp_path = Path(self.temp_dir.name)
+        self.index_path = temp_path / "aggregate_search_index.json"
+        self.query_cache_path = temp_path / "aggregate_search_query_cache.json"
+        self.config = SearchConfig(
+            index_path=self.index_path,
+            query_cache_path=self.query_cache_path,
+            embedding_model="fake-e2e-model",
+            embedding_query_prompt_model_marker="",
+            embedding_device="cpu",
+        )
+        logger.info("prepared temporary search sidecars: %s", temp_path)
+
+    @override
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+        logger.info("cleaned up temporary search sidecars")
+
+    def aggregate_fixtures(self) -> list[Aggregate]:
+        return [
+            Aggregate(
+                short_name="Alpha",
+                category="anime",
+                bangumi_subjects=[
+                    BangumiSubject(
+                        subject_id=1001,
+                        last_updated_at="2026-07-19T00:00:00",
+                        snapshot=BangumiSubjectSnapshot(
+                            name="Alpha Subject",
+                            name_cn="Alpha 中文名",
+                            type=2,
+                            tags=[BangumiTag(name="alpha", count=10)],
+                        ),
+                    )
+                ],
+                torrents=[Torrent(hash="a" * 40)],
+            ),
+            Aggregate(
+                short_name="Beta",
+                category="anime",
+                bangumi_subjects=[
+                    BangumiSubject(
+                        subject_id=1002,
+                        last_updated_at="2026-07-19T00:00:00",
+                        snapshot=BangumiSubjectSnapshot(
+                            name="Beta Subject",
+                            name_cn="Beta 中文名",
+                            type=2,
+                            tags=[BangumiTag(name="beta", count=10)],
+                        ),
+                    )
+                ],
+                torrents=[Torrent(hash="b" * 40)],
+            ),
+        ]
+
+    def assert_search_sidecars_written(self) -> None:
+        self.assertTrue(self.index_path.is_file())
+        self.assertTrue(self.query_cache_path.is_file())
+
+    def assert_indexed_aggregates(
+        self,
+        manager: AggregateSearchManager,
+        expected_short_names: list[str],
+    ) -> None:
+        index = manager.load_index()
+        self.assertEqual(
+            [document.aggregate_short_name for document in index.documents],
+            expected_short_names,
+        )
+
+    def assert_cached_queries(
+        self,
+        manager: AggregateSearchManager,
+        expected_queries: list[str],
+    ) -> None:
+        query_cache = manager.load_query_cache()
+        self.assertEqual([entry.query for entry in query_cache.queries], expected_queries)
+
+
+class MockedSearchE2ETest(BaseSearchE2ETest):
+    def test_fake_embedding_search_index_and_cache_flow(self) -> None:
+        logger.info("test step: run deterministic search")
+        manager = FakeSearchManager(self.config)
+        results = manager.search(
+            self.aggregate_fixtures(),
+            "alpha",
+            limit=2,
+            threshold=1.5,
+        )
+
+        self.assertEqual([result.aggregate.short_name for result in results], ["Alpha"])
+        self.assert_search_sidecars_written()
+        self.assertEqual(manager.encode_call_count, 2)
+        self.assertEqual(manager.encoded_text_count, 3)
+
+        logger.info("test step: verify repeated search reuses index and query cache")
+        second_results = manager.search(
+            self.aggregate_fixtures(),
+            "alpha",
+            limit=2,
+            threshold=1.5,
+        )
+
+        self.assertEqual(
+            [result.aggregate.short_name for result in second_results],
+            ["Alpha"],
+        )
+        self.assertEqual(manager.encode_call_count, 2)
+        self.assertEqual(manager.encoded_text_count, 3)
+
+        logger.info("test step: force index refresh")
+        refreshed_results = manager.search(
+            self.aggregate_fixtures(),
+            "alpha",
+            limit=2,
+            threshold=1.5,
+            force_refresh=True,
+        )
+
+        self.assertEqual(
+            [result.aggregate.short_name for result in refreshed_results],
+            ["Alpha"],
+        )
+        self.assertEqual(manager.encode_call_count, 3)
+        self.assertEqual(manager.encoded_text_count, 5)
+
+        index = manager.load_index()
+        query_cache = manager.load_query_cache()
+        self.assertEqual(index.embedding_model, "fake-e2e-model")
+        self.assertEqual(query_cache.embedding_model, "fake-e2e-model")
+        self.assert_indexed_aggregates(manager, ["Alpha", "Beta"])
+        self.assert_cached_queries(manager, ["alpha"])
+
+
+class SearchE2ETest(BaseSearchE2ETest):
+    allow_download = False
+    device_override: str | None = None
+    base_config: Config | None = None
+
+    def test_real_embedding_generation(self) -> None:
+        if self.base_config is None:
+            raise AssertionError("base_config was not initialized.")
+
+        logger.info("test step: run real embedding search smoke test")
+        base_search_config = self.base_config.search
+        search_config = replace(
+            base_search_config,
+            index_path=self.index_path,
+            query_cache_path=self.query_cache_path,
+            embedding_device=self.device_override
+            or base_search_config.embedding_device,
+        )
+        manager = AggregateSearchManager(
+            config=search_config,
+            local_files_only=not self.allow_download,
+        )
+        aggregates = self.aggregate_fixtures()
+        results = manager.search(aggregates, "alpha subject", limit=2)
+
+        self.assertTrue(results)
+        self.assert_search_sidecars_written()
+
+        index = manager.load_index()
+        query_cache = manager.load_query_cache()
+        self.assertEqual(len(index.documents), len(aggregates))
+        self.assertEqual(len(query_cache.queries), 1)
+        dimensions = {len(document.embedding) for document in index.documents}
+        dimensions.add(len(query_cache.queries[0].embedding))
+        self.assertEqual(len(dimensions), 1)
+        self.assertGreater(next(iter(dimensions)), 0)
+
+
+@click.command("search-e2e")
+@click.option(
+    "--no-mock-embedding",
+    is_flag=True,
+    help="Load the configured embedding model instead of only using the fake encoder.",
+)
+@click.option(
+    "--allow-download",
+    is_flag=True,
+    help="Allow downloading model files for --no-mock-embedding.",
+)
+@click.option("--device", default=None, help="Embedding device override.")
+@click.pass_obj
+def search_e2e(
+    config: Config | None,
+    no_mock_embedding: bool,
+    allow_download: bool,
+    device: str | None,
+) -> None:
+    """Run E2E smoke tests for semantic search indexing and embeddings."""
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
+
+    SearchE2ETest.allow_download = allow_download
+    SearchE2ETest.device_override = device
+    SearchE2ETest.base_config = config or load_config()
+
+    suite = unittest.TestSuite()
+    suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(MockedSearchE2ETest))
+    if no_mock_embedding:
+        suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(SearchE2ETest))
+
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    if not result.wasSuccessful():
+        raise click.exceptions.Exit(1)
+
+    click.echo("Search E2E passed.")
+
+
+if __name__ == "__main__":
+    search_e2e()

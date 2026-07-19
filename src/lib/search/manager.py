@@ -1,13 +1,9 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import math
-import tempfile
 from datetime import datetime
-from pathlib import Path
 
-from pydantic import TypeAdapter
 from sentence_transformers import SentenceTransformer
 
 from config import SearchConfig
@@ -19,6 +15,7 @@ from lib.models.search import (
     SearchQueryCache,
     SearchQueryCacheEntry,
 )
+from lib.search.repositories import JsonSearchRepository, SearchRepository
 
 
 class AggregateSearchManager:
@@ -26,8 +23,10 @@ class AggregateSearchManager:
         self,
         config: SearchConfig,
         local_files_only: bool = True,
+        repository: SearchRepository | None = None,
     ):
         self.config = config
+        self.repository = repository or JsonSearchRepository(config)
         self.local_files_only = local_files_only
         self._model: SentenceTransformer | None = None
 
@@ -42,44 +41,16 @@ class AggregateSearchManager:
         return self._model
 
     def load_index(self) -> SearchIndex:
-        if not self.config.index_path.exists():
-            return SearchIndex(embedding_model=self.config.embedding_model)
-        with self.config.index_path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-        return TypeAdapter(SearchIndex).validate_python(data)
+        return self.repository.load_index()
 
     def save_index(self, index: SearchIndex) -> None:
-        self.write_json_atomic(self.config.index_path, index.model_dump())
+        self.repository.save_index(index)
 
     def load_query_cache(self) -> SearchQueryCache:
-        if not self.config.query_cache_path.exists():
-            return SearchQueryCache(embedding_model=self.config.embedding_model)
-        with self.config.query_cache_path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-        return TypeAdapter(SearchQueryCache).validate_python(data)
+        return self.repository.load_query_cache()
 
     def save_query_cache(self, cache: SearchQueryCache) -> None:
-        self.write_json_atomic(self.config.query_cache_path, cache.model_dump())
-
-    def write_json_atomic(self, path: Path, data: object) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temp_file = tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f"{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        )
-        temp_path = Path(temp_file.name)
-        try:
-            with temp_file:
-                json.dump(data, temp_file, ensure_ascii=False, indent=2)
-                temp_file.write("\n")
-            temp_path.replace(path)
-        finally:
-            if temp_path.exists():
-                temp_path.unlink()
+        self.repository.save_query_cache(cache)
 
     def source_text_for_aggregate(self, aggregate: Aggregate) -> str:
         lines = [
