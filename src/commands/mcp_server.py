@@ -135,7 +135,7 @@ def search_aggregates(
     search_manager = AggregateSearchManager(config.search)
     try:
         results = search_manager.search(
-            manager.list_all(),
+            manager.list_aggregates(),
             query,
             limit=limit,
             threshold=threshold,

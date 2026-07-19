@@ -57,7 +57,7 @@ def search_aggregates(
         raise click.UsageError("Search query cannot be empty.")
 
     manager = AggregateService(config)
-    entries = manager.list_all()
+    entries = manager.list_aggregates()
     if not entries:
         click.echo("The database is empty.")
         return

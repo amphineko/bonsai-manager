@@ -132,7 +132,7 @@ class BonsaiTUI(App[None]):
         self.refresh_data()
 
     def refresh_data(self) -> None:
-        self.all_entries = self.manager.list_all()
+        self.all_entries = self.manager.list_aggregates()
         current_input = self.query_one(Input).value
         self.apply_filter(current_input)
 

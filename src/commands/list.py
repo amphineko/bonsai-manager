@@ -39,7 +39,7 @@ def get_last_synced(entry: Aggregate) -> str:
 def list_entries(config: Config, filter_str: str | None) -> None:
     """Show a tabular summary of tracked entries for humans."""
     manager = AggregateService(config)
-    entries = manager.list_all()
+    entries = manager.list_aggregates()
     if not entries:
         click.echo("The database is empty.")
         return
