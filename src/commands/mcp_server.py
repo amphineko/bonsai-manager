@@ -3,7 +3,7 @@ from typing import TypeVar
 from fastmcp import FastMCP
 
 from config import Config, load_config
-from lib.db import DBManager
+from lib.services import AggregateService
 from lib.models import ResponsePayload
 from lib.models.aggregates import Aggregate
 from lib.models.qbittorrent import TorrentMappingAudit
@@ -34,7 +34,7 @@ def add_aggregate(
     torrent_hashes: list[str] | None = None,
 ) -> ResponsePayload[Aggregate]:
     """Add a new aggregate, optionally seeded by Bangumi and torrent hashes."""
-    manager = DBManager(get_config())
+    manager = AggregateService(get_config())
     aggregate = manager.add_aggregate(short_name, bangumi_subject_id, torrent_hashes)
     return success(
         f"Added aggregate '{aggregate.short_name}'",
@@ -45,7 +45,7 @@ def add_aggregate(
 @mcp.tool
 def remove_aggregate(short_name: str) -> ResponsePayload[Aggregate]:
     """Remove an aggregate by exact short name."""
-    manager = DBManager(get_config())
+    manager = AggregateService(get_config())
     aggregate = manager.remove_aggregate(short_name)
     return success(
         f"Removed aggregate '{aggregate.short_name}'",
@@ -60,7 +60,7 @@ def update_aggregate_torrents(
     remove_hashes: list[str] | None = None,
 ) -> ResponsePayload[list[str]]:
     """Add and/or remove qBittorrent torrent hashes on an existing aggregate."""
-    manager = DBManager(get_config())
+    manager = AggregateService(get_config())
     torrent_hashes = manager.update_aggregate_torrents(
         short_name,
         add_hashes,
@@ -79,7 +79,7 @@ def update_aggregate_bangumi_subjects(
     remove_subject_ids: list[int] | None = None,
 ) -> ResponsePayload[list[int]]:
     """Add and/or remove Bangumi subject IDs on an existing aggregate."""
-    manager = DBManager(get_config())
+    manager = AggregateService(get_config())
     subject_ids = manager.update_aggregate_bangumi_subjects(
         short_name,
         add_subject_ids,
@@ -98,14 +98,14 @@ def list_aggregates(
     filter_bangumi_subject_name: list[str] | None = None,
     filter_bangumi_subject_cn_name: list[str] | None = None,
 ) -> ResponsePayload[list[Aggregate]]:
-    """List aggregates with deterministic filters.
+    """List aggregates, optionally narrowed by deterministic filters.
 
-    Use this when you know exact torrent hashes or wildcard patterns for aggregate
-    short names, Bangumi original names, or Bangumi Chinese names. At least one
-    filter argument is required. For natural-language discovery, use
+    Omit filters to list all aggregates. Use filters when you know exact torrent
+    hashes or SQLite GLOB patterns for aggregate short names, Bangumi original
+    names, or Bangumi Chinese names. For natural-language discovery, use
     search_aggregates instead.
     """
-    manager = DBManager(get_config())
+    manager = AggregateService(get_config())
     aggregates = manager.list_aggregates(
         filter_short_name,
         filter_torrent_hashes,
@@ -128,14 +128,14 @@ def search_aggregates(
 
     Use this for fuzzy semantic discovery, vague descriptions, translated title
     fragments, or cross-language title search. For exact torrent hashes or known
-    wildcard patterns, use list_aggregates instead.
+    SQLite GLOB patterns, use list_aggregates instead.
     """
     config = get_config()
-    manager = DBManager(config)
+    manager = AggregateService(config)
     search_manager = AggregateSearchManager(config.search)
     try:
         results = search_manager.search(
-            manager.load_db(),
+            manager.list_aggregates(),
             query,
             limit=limit,
             threshold=threshold,
@@ -158,7 +158,7 @@ def audit_torrent_mapping(
     """Audit qBittorrent torrents against stored aggregate mappings."""
     config = get_config()
     categories = category or list(config.audit_categories)
-    manager = DBManager(config)
+    manager = AggregateService(config)
     return success(
         "Audited torrent mapping",
         manager.audit_torrent_mapping(categories),

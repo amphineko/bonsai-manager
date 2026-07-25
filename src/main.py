@@ -1,6 +1,7 @@
 import click
 
 from commands.list import list_entries
+from commands.db import db_commands
 from commands.mcp_server import run_mcp_server
 from commands.search import search_aggregates
 from commands.audit import audit_torrent_mapping
@@ -25,6 +26,7 @@ def mcp(config: Config):
 
 
 cli.add_command(audit_torrent_mapping)
+cli.add_command(db_commands)
 cli.add_command(launch_tui)
 cli.add_command(list_entries)
 cli.add_command(scripts)

@@ -6,7 +6,7 @@ from rich.table import Table
 from rich.text import Text
 
 from config import Config
-from lib.db import DBManager
+from lib.services import AggregateService
 from lib.models.aggregates import Aggregate
 from lib.search import AggregateSearchManager
 
@@ -56,8 +56,8 @@ def search_aggregates(
     if not query:
         raise click.UsageError("Search query cannot be empty.")
 
-    manager = DBManager(config)
-    entries = manager.load_db()
+    manager = AggregateService(config)
+    entries = manager.list_aggregates()
     if not entries:
         click.echo("The database is empty.")
         return

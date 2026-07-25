@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import socket
 
 import click
 from fastmcp import Client
@@ -13,30 +12,9 @@ from rich.pretty import pprint
 from config import PROJECT_ROOT
 from lib.models import ResponsePayload
 from lib.models.search import AggregateSearchResults
+from scripts.sandbox import warn_if_sandboxed
 
 MCP_TIMEOUT_SECONDS = 30.0
-
-SANDBOX_WARNING = (
-    "Warning: this environment blocks socketpair writes. asyncio/AnyIO MCP stdio "
-    "clients may hang here; run this smoke test outside the sandbox if it times out."
-)
-
-
-def socketpair_write_is_blocked() -> bool:
-    try:
-        read_socket, write_socket = socket.socketpair()
-    except OSError:
-        return False
-    try:
-        try:
-            write_socket.send(b"x")
-        except PermissionError:
-            return True
-        return False
-    finally:
-        read_socket.close()
-        write_socket.close()
-
 
 async def call_search_aggregates(query: str) -> CallToolResult:
     transport = StdioTransport(
@@ -62,8 +40,7 @@ def mcp_search_aggregates(query: str) -> None:
 
     This command also serves as a smoke test for the MCP server.
     """
-    if socketpair_write_is_blocked():
-        click.echo(SANDBOX_WARNING, err=True)
+    warn_if_sandboxed("smoke test")
 
     try:
         tool_result = asyncio.run(

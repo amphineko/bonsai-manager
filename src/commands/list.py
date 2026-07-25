@@ -4,7 +4,7 @@ from rich.table import Table
 from rich.text import Text
 
 from config import Config
-from lib.db import DBManager
+from lib.services import AggregateService
 from lib.models.aggregates import Aggregate
 
 
@@ -38,8 +38,8 @@ def get_last_synced(entry: Aggregate) -> str:
 @click.pass_obj
 def list_entries(config: Config, filter_str: str | None) -> None:
     """Show a tabular summary of tracked entries for humans."""
-    manager = DBManager(config)
-    entries = manager.load_db()
+    manager = AggregateService(config)
+    entries = manager.list_aggregates()
     if not entries:
         click.echo("The database is empty.")
         return

@@ -9,12 +9,19 @@ wheels/
 # Agent environments
 .codex/
 .opencode/
+PROGRESS.md
+SKILLS.md
+.env
+.env.*
 
 # Virtual environments
 .venv
 
 # Database
 db.json
+*.json.deleted
+*.sqlite3
+*.sqlite3-*
 
 # Generated search cache
 aggregate_search_index.json

@@ -3,13 +3,19 @@ from typing import TypedDict, cast
 import requests
 
 from config import BangumiConfig, load_config
-from lib.models.bangumi import BangumiSubjectSnapshot
+from lib.models.bangumi import BangumiSubjectSnapshot, BangumiTag
+
+
+class BangumiTagResponse(TypedDict, total=False):
+    name: str
+    count: int
 
 
 class BangumiSubjectResponse(TypedDict, total=False):
     name: str
     name_cn: str
     type: int
+    tags: list[BangumiTagResponse]
 
 
 class BangumiClient:
@@ -43,4 +49,9 @@ class BangumiClient:
             name=data.get("name", ""),
             name_cn=data.get("name_cn", ""),
             type=data.get("type"),
+            tags=[
+                BangumiTag(name=tag.get("name", ""), count=tag.get("count", 0))
+                for tag in data.get("tags", [])
+                if tag.get("name")
+            ],
         )

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from dotenv import dotenv_values
 
@@ -53,7 +54,7 @@ class QbittorrentConfig:
             )
 
         return cls(
-            host=environs.get("QBIT_HOST", "localhost"),
+            host=environs.get("QBIT_HOST", "http://localhost"),
             port=port,
             username=environs.get("QBIT_USERNAME", "admin"),
             password=environs.get("QBIT_PASSWORD", "adminadmin"),
@@ -61,7 +62,18 @@ class QbittorrentConfig:
 
     @property
     def base_url(self) -> str:
-        return f"{self.host}:{self.port}/api/v2"
+        parsed = urlsplit(self.host)
+        if not parsed.netloc:
+            parsed = urlsplit(f"//{self.host}")
+        if parsed.hostname is None:
+            raise ValueError(f"Invalid QBIT_HOST: {self.host!r}")
+
+        scheme = parsed.scheme or "http"
+        if parsed.port is None:
+            netloc = f"{parsed.hostname}:{self.port}"
+        else:
+            netloc = parsed.netloc
+        return urlunsplit((scheme, netloc, "/api/v2", "", ""))
 
 
 @dataclass
@@ -126,8 +138,19 @@ class WebConfig:
 
 
 @dataclass
+class DatabaseConfig:
+    path: Path
+
+    @classmethod
+    def from_env(cls, environs: dict[str, str]) -> DatabaseConfig:
+        return cls(
+            path=resolve_project_path(Path(environs.get("DB_PATH", "db.sqlite3"))),
+        )
+
+
+@dataclass
 class Config:
-    db_path: Path
+    database: DatabaseConfig
     aggregate_category: str
     audit_categories: tuple[str, ...]
     bangumi: BangumiConfig
@@ -138,7 +161,7 @@ class Config:
     @classmethod
     def from_env(cls, environs: dict[str, str]) -> Config:
         return cls(
-            db_path=resolve_project_path(Path(environs.get("DB_PATH", "db.json"))),
+            database=DatabaseConfig.from_env(environs),
             aggregate_category=environs.get("AGGREGATE_CATEGORY", "anime"),
             audit_categories=tuple(
                 category.strip()
