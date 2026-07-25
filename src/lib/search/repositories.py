@@ -26,6 +26,10 @@ class SearchRepository(Protocol):
 
     def replace_documents(self, documents: list[AggregateSearchDocument]) -> None: ...
 
+    def upsert_document(self, document: AggregateSearchDocument) -> None: ...
+
+    def delete_document(self, aggregate_short_name: str) -> None: ...
+
     def search_documents(
         self,
         query_embedding: list[float],
@@ -66,26 +70,43 @@ class LanceDbSearchRepository:
             return 0
         return int(
             db.open_table(DOCUMENTS_TABLE).count_rows(
-                f"embedding_model = '{self.config.embedding_model}'"
+                f"embedding_model = {lance_sql_string(self.config.embedding_model)}"
             )
         )
 
     def replace_documents(self, documents: list[AggregateSearchDocument]) -> None:
         dimension = embedding_dimension(documents)
-        rows: list[dict[str, object]] = [
-            {
-                "version": 1,
-                "embedding_model": self.config.embedding_model,
-                "aggregate_short_name": document.aggregate_short_name,
-                "source_text": document.source_text,
-                "source_hash": document.source_hash,
-                "vector": document.embedding,
-                "model_name": document.model_name,
-                "updated_at": document.updated_at,
-            }
-            for document in documents
-        ]
+        rows = [self.document_row(document) for document in documents]
         self.replace_table(DOCUMENTS_TABLE, rows, document_schema(dimension))
+
+    def upsert_document(self, document: AggregateSearchDocument) -> None:
+        db = self.connect()
+        row = self.document_row(document)
+        if DOCUMENTS_TABLE not in db.list_tables().tables:
+            db.create_table(
+                DOCUMENTS_TABLE,
+                data=[row],
+                schema=document_schema(len(document.embedding)),
+                mode="overwrite",
+            )
+            return
+
+        table = db.open_table(DOCUMENTS_TABLE)
+        table.delete(
+            document_filter(
+                self.config.embedding_model,
+                document.aggregate_short_name,
+            )
+        )
+        table.add([row])
+
+    def delete_document(self, aggregate_short_name: str) -> None:
+        db = self.connect()
+        if DOCUMENTS_TABLE not in db.list_tables().tables:
+            return
+        db.open_table(DOCUMENTS_TABLE).delete(
+            document_filter(self.config.embedding_model, aggregate_short_name)
+        )
 
     def search_documents(
         self,
@@ -148,6 +169,18 @@ class LanceDbSearchRepository:
         ]
         self.replace_table(QUERIES_TABLE, rows, query_schema())
 
+    def document_row(self, document: AggregateSearchDocument) -> dict[str, object]:
+        return {
+            "version": 1,
+            "embedding_model": self.config.embedding_model,
+            "aggregate_short_name": document.aggregate_short_name,
+            "source_text": document.source_text,
+            "source_hash": document.source_hash,
+            "vector": document.embedding,
+            "model_name": document.model_name,
+            "updated_at": document.updated_at,
+        }
+
     def table_rows(self, name: str) -> list[dict[str, Any]]:
         db = self.connect()
         if name not in db.list_tables().tables:
@@ -175,6 +208,19 @@ def embedding_dimension(documents: list[AggregateSearchDocument]) -> int:
     if len(dimensions) > 1:
         raise ValueError("Search documents must use a single embedding dimension.")
     return dimensions.pop()
+
+
+def lance_sql_string(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def document_filter(embedding_model: str, aggregate_short_name: str) -> str:
+    return " AND ".join(
+        [
+            "embedding_model = " + lance_sql_string(embedding_model),
+            "aggregate_short_name = " + lance_sql_string(aggregate_short_name),
+        ]
+    )
 
 
 def document_schema(dimension: int) -> pa.Schema:

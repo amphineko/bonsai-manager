@@ -196,6 +196,9 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
                 "QBIT_PASSWORD": "mock",
                 "BANGUMI_BASE_URL": self.mock_server.base_url,
                 "BANGUMI_TOKEN": "",
+                "SEARCH_LANCEDB_PATH": str(
+                    Path(self.temp_dir.name) / "aggregate_search.lancedb"
+                ),
             }
         )
         transport = StdioTransport(

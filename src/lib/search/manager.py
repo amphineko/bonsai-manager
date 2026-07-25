@@ -202,6 +202,23 @@ class AggregateSearchManager:
         self.repository.replace_documents(documents)
         return documents
 
+    def index_aggregate(self, aggregate: Aggregate) -> AggregateSearchDocument:
+        embedding = self.encode(
+            [AggregateSearchDocument.source_text_from_aggregate(aggregate)],
+            is_query=False,
+        )[0]
+        document = AggregateSearchDocument.from_aggregate(
+            aggregate=aggregate,
+            embedding=embedding,
+            model_name=self.config.embedding_model,
+            updated_at=datetime.now(UTC).isoformat(),
+        )
+        self.repository.upsert_document(document)
+        return document
+
+    def delete_aggregate(self, short_name: str) -> None:
+        self.repository.delete_document(short_name)
+
     def search(
         self,
         query: str,

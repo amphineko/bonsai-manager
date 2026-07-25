@@ -26,6 +26,13 @@ def get_config() -> Config:
     return _config
 
 
+def get_search_manager(
+    config: Config,
+    manager: AggregateService,
+) -> AggregateSearchManager:
+    return AggregateSearchManager(config.search, aggregates=manager.queries)
+
+
 @mcp.tool
 def add_aggregate(
     short_name: str,
@@ -33,8 +40,10 @@ def add_aggregate(
     torrent_hashes: list[str] | None = None,
 ) -> ResponsePayload[Aggregate]:
     """Add a new aggregate, optionally seeded by Bangumi and torrent hashes."""
-    manager = AggregateService(get_config())
+    config = get_config()
+    manager = AggregateService(config)
     aggregate = manager.add_aggregate(short_name, bangumi_subject_id, torrent_hashes)
+    get_search_manager(config, manager).index_aggregate(aggregate)
     return success(
         f"Added aggregate '{aggregate.short_name}'",
         aggregate,
@@ -44,8 +53,10 @@ def add_aggregate(
 @mcp.tool
 def remove_aggregate(short_name: str) -> ResponsePayload[Aggregate]:
     """Remove an aggregate by exact short name."""
-    manager = AggregateService(get_config())
+    config = get_config()
+    manager = AggregateService(config)
     aggregate = manager.remove_aggregate(short_name)
+    get_search_manager(config, manager).delete_aggregate(short_name)
     return success(
         f"Removed aggregate '{aggregate.short_name}'",
         aggregate,
@@ -78,12 +89,16 @@ def update_aggregate_bangumi_subjects(
     remove_subject_ids: list[int] | None = None,
 ) -> ResponsePayload[list[int]]:
     """Add and/or remove Bangumi subject IDs on an existing aggregate."""
-    manager = AggregateService(get_config())
+    config = get_config()
+    manager = AggregateService(config)
     subject_ids = manager.update_aggregate_bangumi_subjects(
         short_name,
         add_subject_ids,
         remove_subject_ids,
     )
+    aggregates = manager.queries.get_by_short_names([short_name])
+    if aggregates:
+        get_search_manager(config, manager).index_aggregate(aggregates[0])
     return success(
         f"Updated Bangumi subjects for '{short_name}'",
         subject_ids,
@@ -133,7 +148,7 @@ def search_aggregates(
     """
     config = get_config()
     manager = AggregateService(config)
-    search_manager = AggregateSearchManager(config.search, aggregates=manager.queries)
+    search_manager = get_search_manager(config, manager)
     try:
         results = search_manager.search(
             query,
