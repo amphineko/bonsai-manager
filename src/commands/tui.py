@@ -1,16 +1,22 @@
+from __future__ import annotations
+
 import re
-from typing import override
+from typing import TYPE_CHECKING, ClassVar, override
 
 import click
-from textual.app import App, ComposeResult
-from textual.containers import Container
-from textual.widgets import Header, Footer, Input, DataTable, Static
-from textual.binding import Binding
-from rich.text import Text
 from rich.console import Group
-from config import Config, load_config
+from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Container
+from textual.widgets import DataTable, Footer, Header, Input, Static
+
+from config import load_config
 from lib.services import AggregateService
-from lib.models.aggregates import Aggregate
+
+if TYPE_CHECKING:
+    from config import Config
+    from lib.models.aggregates import Aggregate
 
 
 def format_bangumi_name_cn(entry: Aggregate) -> str:
@@ -91,7 +97,7 @@ class BonsaiTUI(App[None]):
     }
     """
 
-    BINDINGS = [
+    BINDINGS: ClassVar = [
         Binding("q", "quit", "Quit", show=True),
         Binding("escape", "clear_search", "Clear Search", show=True),
         Binding("f5", "refresh_db", "Refresh Data", show=True),
@@ -164,7 +170,7 @@ class BonsaiTUI(App[None]):
         table = self.query_one(DataTable)
         table.clear()
         for entry in self.filtered_entries:
-            # For DataTable, we can use Text objects which bypass markup parsing entirely
+            # Text objects bypass DataTable markup parsing entirely.
             table.add_row(
                 Text(entry.category),
                 Text(entry.short_name),

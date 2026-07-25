@@ -1,9 +1,9 @@
-from typing import List
+from __future__ import annotations
 
-from config import Config, load_config
+from typing import TYPE_CHECKING
+
+from config import load_config
 from lib.bangumi import BangumiClient
-from lib.models.aggregates import Aggregate, Torrent
-from lib.models.qbittorrent import TorrentMappingAudit
 from lib.qbittorrent import QbittorrentClient
 from lib.services.audit import AggregateAuditService
 from lib.services.bangumi import AggregateBangumiService
@@ -11,6 +11,11 @@ from lib.services.creation import AggregateCreationService
 from lib.services.queries import AggregateQueryService
 from lib.services.torrents import AggregateTorrentService
 from lib.sql.repositories import SqliteAggregateRepository
+
+if TYPE_CHECKING:
+    from config import Config
+    from lib.models.aggregates import Aggregate, Torrent
+    from lib.models.qbittorrent import TorrentMappingAudit
 
 
 class AggregateService:
@@ -44,7 +49,7 @@ class AggregateService:
         self,
         short_name: str,
         bangumi_subject_id: int | None = None,
-        torrent_hashes: List[str] | None = None,
+        torrent_hashes: list[str] | None = None,
     ) -> Aggregate:
         return self.creation.add_aggregate(
             short_name,
@@ -58,9 +63,9 @@ class AggregateService:
     def update_aggregate_torrents(
         self,
         short_name: str,
-        add_hashes: List[str] | None = None,
-        remove_hashes: List[str] | None = None,
-    ) -> List[str]:
+        add_hashes: list[str] | None = None,
+        remove_hashes: list[str] | None = None,
+    ) -> list[str]:
         return self.torrents.update_aggregate_torrents(
             short_name,
             add_hashes,
@@ -70,9 +75,9 @@ class AggregateService:
     def update_aggregate_bangumi_subjects(
         self,
         short_name: str,
-        add_subject_ids: List[int] | None = None,
-        remove_subject_ids: List[int] | None = None,
-    ) -> List[int]:
+        add_subject_ids: list[int] | None = None,
+        remove_subject_ids: list[int] | None = None,
+    ) -> list[int]:
         return self.bangumi.update_aggregate_bangumi_subjects(
             short_name,
             add_subject_ids,
@@ -81,11 +86,11 @@ class AggregateService:
 
     def list_aggregates(
         self,
-        filter_short_name: List[str] | None = None,
-        filter_torrent_hashes: List[str] | None = None,
-        filter_bangumi_subject_name: List[str] | None = None,
-        filter_bangumi_subject_cn_name: List[str] | None = None,
-    ) -> List[Aggregate]:
+        filter_short_name: list[str] | None = None,
+        filter_torrent_hashes: list[str] | None = None,
+        filter_bangumi_subject_name: list[str] | None = None,
+        filter_bangumi_subject_cn_name: list[str] | None = None,
+    ) -> list[Aggregate]:
         return self.queries.list_aggregates(
             filter_short_name,
             filter_torrent_hashes,
@@ -98,7 +103,7 @@ class AggregateService:
 
     def audit_torrent_mapping(
         self,
-        categories: List[str] | None = None,
+        categories: list[str] | None = None,
     ) -> TorrentMappingAudit:
         return self.audit.audit_torrent_mapping(categories)
 

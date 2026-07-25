@@ -10,7 +10,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, override
+from typing import Any, Self, override
 from urllib.parse import parse_qs, urlsplit
 
 import click
@@ -71,10 +71,7 @@ class MockHandler(BaseHTTPRequestHandler):
             case "/api/v2/torrents/info":
                 params = parse_qs(parsed.query)
                 hashes = params.get("hashes", [])
-                if hashes:
-                    torrent_hashes = hashes[0].split("|")
-                else:
-                    torrent_hashes = list(TORRENTS)
+                torrent_hashes = hashes[0].split("|") if hashes else list(TORRENTS)
                 logger.info("mock qBittorrent torrent info: %s", torrent_hashes)
                 self.send_json(
                     [
@@ -137,7 +134,7 @@ class MockHttpServer:
     def base_url(self) -> str:
         return f"{self.host}:{self.port}"
 
-    def __enter__(self) -> MockHttpServer:
+    def __enter__(self) -> Self:
         logger.info("starting mock HTTP server: %s", self.base_url)
         self.thread.start()
         return self

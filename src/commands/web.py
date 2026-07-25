@@ -3,7 +3,7 @@ import shlex
 import click
 from textual_serve.server import Server
 
-from config import Config, PROJECT_ROOT
+from config import PROJECT_ROOT, Config
 
 
 def build_tui_command() -> str:

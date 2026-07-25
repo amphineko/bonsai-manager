@@ -1,22 +1,21 @@
-from typing import TypeVar
+from __future__ import annotations
 
 from fastmcp import FastMCP
 
 from config import Config, load_config
-from lib.services import AggregateService
 from lib.models import ResponsePayload
-from lib.models.aggregates import Aggregate
-from lib.models.qbittorrent import TorrentMappingAudit
+from lib.models.aggregates import Aggregate  # noqa: TC001
+from lib.models.qbittorrent import TorrentMappingAudit  # noqa: TC001
 from lib.models.search import AggregateSearchResults
 from lib.search import AggregateSearchManager
+from lib.services import AggregateService
 
 mcp = FastMCP("bonsai-manager", version="0.1.0")
 
-DataT = TypeVar("DataT")
 _config: Config | None = None
 
 
-def success(message: str, data: DataT) -> ResponsePayload[DataT]:
+def success[DataT](message: str, data: DataT) -> ResponsePayload[DataT]:
     return ResponsePayload(message=message, data=data)
 
 
@@ -134,10 +133,9 @@ def search_aggregates(
     """
     config = get_config()
     manager = AggregateService(config)
-    search_manager = AggregateSearchManager(config.search)
+    search_manager = AggregateSearchManager(config.search, aggregates=manager.queries)
     try:
         results = search_manager.search(
-            manager.list_aggregates(),
             query,
             limit=limit,
             threshold=threshold,

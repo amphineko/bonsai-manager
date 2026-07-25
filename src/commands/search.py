@@ -1,14 +1,19 @@
+from __future__ import annotations
+
 from dataclasses import replace
+from typing import TYPE_CHECKING
 
 import click
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
-from config import Config
-from lib.services import AggregateService
-from lib.models.aggregates import Aggregate
 from lib.search import AggregateSearchManager
+from lib.services import AggregateService
+
+if TYPE_CHECKING:
+    from config import Config
+    from lib.models.aggregates import Aggregate
 
 
 def format_bangumi_names(entry: Aggregate) -> str:
@@ -77,8 +82,8 @@ def search_aggregates(
         raise click.UsageError("Search query cannot be empty.")
 
     manager = AggregateService(config)
-    entries = manager.list_aggregates()
-    if not entries:
+    aggregate_queries = manager.queries
+    if not aggregate_queries.list_aggregates():
         click.echo("The database is empty.")
         return
 
@@ -87,11 +92,11 @@ def search_aggregates(
     )
     search_manager = AggregateSearchManager(
         config=search_config,
+        aggregates=aggregate_queries,
         local_files_only=not allow_download,
     )
     if rebuild_index:
         documents = search_manager.rebuild(
-            entries,
             force=force_rebuild,
             show_progress=True,
         )
@@ -99,7 +104,6 @@ def search_aggregates(
         return
 
     results = search_manager.search(
-        entries,
         query,
         limit=limit,
         threshold=threshold,

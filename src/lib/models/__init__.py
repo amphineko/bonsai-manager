@@ -1,4 +1,4 @@
-from typing import Generic, Literal, TypeVar
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -21,10 +21,7 @@ from lib.models.search import (
 )
 
 
-DataT = TypeVar("DataT")
-
-
-class ResponsePayload(BaseModel, Generic[DataT]):
+class ResponsePayload[DataT](BaseModel):
     status: Literal["success"] = "success"
     message: str
     data: DataT

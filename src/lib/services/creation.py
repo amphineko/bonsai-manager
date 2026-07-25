@@ -1,10 +1,15 @@
-from contextlib import AbstractContextManager
-from typing import List
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from lib.models.aggregates import Aggregate
-from lib.services.bangumi import AggregateBangumiService
-from lib.services.torrents import AggregateTorrentService
-from lib.sql.repositories import SqliteAggregateRepository
+
+if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
+    from lib.services.bangumi import AggregateBangumiService
+    from lib.services.torrents import AggregateTorrentService
+    from lib.sql.repositories import SqliteAggregateRepository
 
 
 class AggregateCreationService:
@@ -31,7 +36,7 @@ class AggregateCreationService:
         self,
         short_name: str,
         bangumi_subject_id: int | None = None,
-        torrent_hashes: List[str] | None = None,
+        torrent_hashes: list[str] | None = None,
     ) -> Aggregate:
         torrent_hashes = torrent_hashes or []
         subject_ids = [] if bangumi_subject_id is None else [bangumi_subject_id]

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import lancedb
 import pyarrow as pa
 
-from config import SearchConfig
 from lib.models.search import (
     AggregateSearchDocument,
     SearchDocumentMatch,
@@ -13,12 +12,17 @@ from lib.models.search import (
     SearchQueryCacheEntry,
 )
 
+if TYPE_CHECKING:
+    from config import SearchConfig
+
 DOCUMENTS_TABLE = "aggregate_search_documents"
 QUERIES_TABLE = "aggregate_search_queries"
 
 
 class SearchRepository(Protocol):
     def list_documents(self) -> list[AggregateSearchDocument]: ...
+
+    def count_documents(self) -> int: ...
 
     def replace_documents(self, documents: list[AggregateSearchDocument]) -> None: ...
 
@@ -54,6 +58,16 @@ class LanceDbSearchRepository:
                 if row.get("embedding_model") == self.config.embedding_model
             ],
             key=lambda document: document.aggregate_short_name.lower(),
+        )
+
+    def count_documents(self) -> int:
+        db = self.connect()
+        if DOCUMENTS_TABLE not in db.list_tables().tables:
+            return 0
+        return int(
+            db.open_table(DOCUMENTS_TABLE).count_rows(
+                f"embedding_model = '{self.config.embedding_model}'"
+            )
         )
 
     def replace_documents(self, documents: list[AggregateSearchDocument]) -> None:

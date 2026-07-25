@@ -23,13 +23,35 @@ dependencies = [
 
 [tool.pyrefly]
 preset = "strict"
-project-includes = [
-    "**/*.py*",
-    "**/*.ipynb",
-]
+project-includes = ["**/*.py*", "**/*.ipynb"]
 
 [dependency-groups]
 dev = [
+    "ruff>=0.16.0",
     "types-requests>=2.33.0.20260518",
     "types-tqdm>=4.68.0.20260608",
 ]
+
+[tool.ruff.lint]
+extend-select = [
+    "B",
+    "C4",
+    "E",
+    "F",
+    "FA",
+    "FURB",
+    "I",
+    "ISC",
+    "PTH",
+    "RET",
+    "SIM",
+    "TC",
+    "TID",
+    "W",
+]
+ignore = []
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.format]
+docstring-code-format = true

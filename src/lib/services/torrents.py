@@ -1,9 +1,15 @@
-from contextlib import AbstractContextManager
-from typing import List
+from __future__ import annotations
 
-from lib.models.aggregates import Aggregate, Torrent
-from lib.qbittorrent import QbittorrentClient
-from lib.sql.repositories import SqliteAggregateRepository
+from typing import TYPE_CHECKING
+
+from lib.models.aggregates import Torrent
+
+if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
+    from lib.models.aggregates import Aggregate
+    from lib.qbittorrent import QbittorrentClient
+    from lib.sql.repositories import SqliteAggregateRepository
 
 
 class AggregateTorrentService:
@@ -22,14 +28,14 @@ class AggregateTorrentService:
     ) -> AbstractContextManager[SqliteAggregateRepository]:
         return self.repository.get_repository(write=write)
 
-    def validate_torrent_hash_args(self, torrent_hashes: List[str]) -> None:
+    def validate_torrent_hash_args(self, torrent_hashes: list[str]) -> None:
         if len(set(torrent_hashes)) != len(torrent_hashes):
             raise ValueError("Torrent hashes contain duplicates.")
 
     def validate_new_torrent_hashes_in_repository(
         self,
         repo: SqliteAggregateRepository,
-        torrent_hashes: List[str],
+        torrent_hashes: list[str],
     ) -> None:
         for torrent_hash in torrent_hashes:
             existing_entry = repo.get_by_torrent_hash(torrent_hash)
@@ -38,7 +44,7 @@ class AggregateTorrentService:
                     f"Torrent hash already exists in '{existing_entry.short_name}'."
                 )
 
-    def validate_torrent_hashes_in_qbittorrent(self, torrent_hashes: List[str]) -> None:
+    def validate_torrent_hashes_in_qbittorrent(self, torrent_hashes: list[str]) -> None:
         if torrent_hashes:
             self.qbit.login()
 
@@ -49,25 +55,25 @@ class AggregateTorrentService:
                     f"Torrent with hash '{torrent_hash}' not found in qBittorrent."
                 )
 
-    def build_torrents(self, torrent_hashes: List[str]) -> List[Torrent]:
+    def build_torrents(self, torrent_hashes: list[str]) -> list[Torrent]:
         return [Torrent(hash=torrent_hash) for torrent_hash in torrent_hashes]
 
     def update_aggregate_torrents(
         self,
         short_name: str,
-        add_hashes: List[str] | None = None,
-        remove_hashes: List[str] | None = None,
-    ) -> List[str]:
+        add_hashes: list[str] | None = None,
+        remove_hashes: list[str] | None = None,
+    ) -> list[str]:
         add_hashes = add_hashes or []
         remove_hashes = remove_hashes or []
         try:
             self.validate_torrent_hash_args(add_hashes)
-        except ValueError:
-            raise ValueError("Torrent hashes to add contain duplicates.")
+        except ValueError as exc:
+            raise ValueError("Torrent hashes to add contain duplicates.") from exc
         try:
             self.validate_torrent_hash_args(remove_hashes)
-        except ValueError:
-            raise ValueError("Torrent hashes to remove contain duplicates.")
+        except ValueError as exc:
+            raise ValueError("Torrent hashes to remove contain duplicates.") from exc
         if set(add_hashes) & set(remove_hashes):
             raise ValueError(
                 "Cannot add and remove the same torrent hash in one update."
@@ -104,7 +110,7 @@ class AggregateTorrentService:
         self,
         short_name: str,
         target_entry: Aggregate,
-        remove_hashes: List[str],
+        remove_hashes: list[str],
     ) -> None:
         current_hashes = [torrent.hash for torrent in target_entry.torrents]
         current_hash_set = set(current_hashes)
@@ -115,6 +121,5 @@ class AggregateTorrentService:
         ]
         if missing_hashes:
             raise ValueError(
-                f"Torrent hash not found in '{short_name}': "
-                f"{', '.join(missing_hashes)}"
+                f"Torrent hash not found in '{short_name}': {', '.join(missing_hashes)}"
             )

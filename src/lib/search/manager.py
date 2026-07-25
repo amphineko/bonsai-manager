@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Protocol
 
 from sentence_transformers import SentenceTransformer
 from tqdm.auto import tqdm
 
-from config import SearchConfig
-from lib.models.aggregates import Aggregate
 from lib.models.search import (
     AggregateSearchDocument,
     AggregateSearchResult,
@@ -16,15 +15,27 @@ from lib.models.search import (
 )
 from lib.search.repositories import LanceDbSearchRepository, SearchRepository
 
+if TYPE_CHECKING:
+    from config import SearchConfig
+    from lib.models.aggregates import Aggregate
+
+
+class AggregateProvider(Protocol):
+    def list_aggregates(self) -> list[Aggregate]: ...
+
+    def get_by_short_names(self, short_names: list[str]) -> list[Aggregate]: ...
+
 
 class AggregateSearchManager:
     def __init__(
         self,
         config: SearchConfig,
+        aggregates: AggregateProvider,
         local_files_only: bool = True,
         repository: SearchRepository | None = None,
     ):
         self.config = config
+        self.aggregates = aggregates
         self.repository = repository or LanceDbSearchRepository(config)
         self.local_files_only = local_files_only
         self._model: SentenceTransformer | None = None
@@ -42,32 +53,14 @@ class AggregateSearchManager:
     def list_documents(self) -> list[AggregateSearchDocument]:
         return self.repository.list_documents()
 
+    def count_documents(self) -> int:
+        return self.repository.count_documents()
+
     def load_query_cache(self) -> SearchQueryCache:
         return self.repository.load_query_cache()
 
     def save_query_cache(self, cache: SearchQueryCache) -> None:
         self.repository.save_query_cache(cache)
-
-    def source_text_for_aggregate(self, aggregate: Aggregate) -> str:
-        lines = [
-            f"short_name: {aggregate.short_name}",
-            f"category: {aggregate.category}",
-        ]
-        for subject in aggregate.bangumi_subjects:
-            lines.append(f"bangumi_subject_id: {subject.subject_id}")
-            if subject.snapshot:
-                lines.append(f"bangumi_name: {subject.snapshot.name}")
-                lines.append(f"bangumi_cn_name: {subject.snapshot.name_cn}")
-                if subject.snapshot.tags:
-                    lines.append(
-                        "bangumi_tags: "
-                        + ", ".join(tag.name for tag in subject.snapshot.tags)
-                    )
-        return "\n".join(line for line in lines if not line.endswith(": "))
-
-    def source_hash(self, source_text: str) -> str:
-        digest = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
-        return f"sha256:{digest}"
 
     def query_hash(self, query: str) -> str:
         digest = hashlib.sha256(query.encode("utf-8")).hexdigest()
@@ -117,7 +110,7 @@ class AggregateSearchManager:
                     return entry.embedding
 
         embedding = self.encode([query], is_query=True, show_progress=show_progress)[0]
-        now = datetime.now().isoformat()
+        now = datetime.now(UTC).isoformat()
         existing_entries = [
             entry
             for entry in cache.queries
@@ -147,18 +140,17 @@ class AggregateSearchManager:
 
     def rebuild(
         self,
-        aggregates: list[Aggregate],
         force: bool = False,
         show_progress: bool = False,
     ) -> list[AggregateSearchDocument]:
+        aggregates = self.aggregates.list_aggregates()
         existing_documents = self.repository.list_documents()
         old_documents = {
-            document.aggregate_short_name: document
-            for document in existing_documents
+            document.aggregate_short_name: document for document in existing_documents
         }
 
         new_documents: list[AggregateSearchDocument] = []
-        stale_items: list[tuple[Aggregate, str, str]] = []
+        stale_items: list[tuple[Aggregate, str]] = []
         aggregate_items = tqdm(
             aggregates,
             desc="Checking search documents",
@@ -166,8 +158,8 @@ class AggregateSearchManager:
             disable=not show_progress,
         )
         for aggregate in aggregate_items:
-            source_text = self.source_text_for_aggregate(aggregate)
-            source_hash = self.source_hash(source_text)
+            source_text = AggregateSearchDocument.source_text_from_aggregate(aggregate)
+            source_hash = AggregateSearchDocument.source_hash_from_text(source_text)
             old_document = old_documents.get(aggregate.short_name)
             if (
                 not force
@@ -177,28 +169,26 @@ class AggregateSearchManager:
             ):
                 new_documents.append(old_document)
             else:
-                stale_items.append((aggregate, source_text, source_hash))
+                stale_items.append((aggregate, source_text))
 
         if stale_items:
             embeddings = self.encode(
-                [source_text for _, source_text, _ in stale_items],
+                [source_text for _, source_text in stale_items],
                 is_query=False,
                 show_progress=show_progress,
             )
-            now = datetime.now().isoformat()
+            now = datetime.now(UTC).isoformat()
             document_items = tqdm(
-                zip(stale_items, embeddings),
+                zip(stale_items, embeddings, strict=True),
                 total=len(stale_items),
                 desc="Updating search documents",
                 unit="document",
                 disable=not show_progress,
             )
-            for (aggregate, source_text, source_hash), embedding in document_items:
+            for (aggregate, _source_text), embedding in document_items:
                 new_documents.append(
-                    AggregateSearchDocument(
-                        aggregate_short_name=aggregate.short_name,
-                        source_text=source_text,
-                        source_hash=source_hash,
+                    AggregateSearchDocument.from_aggregate(
+                        aggregate=aggregate,
                         embedding=embedding,
                         model_name=self.config.embedding_model,
                         updated_at=now,
@@ -214,31 +204,38 @@ class AggregateSearchManager:
 
     def search(
         self,
-        aggregates: list[Aggregate],
         query: str,
         limit: int = 10,
         threshold: float | None = None,
         show_progress: bool = False,
     ) -> list[AggregateSearchResult]:
-        if not self.repository.list_documents():
-            raise ValueError("Search index is empty. Run `search --rebuild-index` first.")
-        aggregate_by_short_name = {
-            aggregate.short_name: aggregate for aggregate in aggregates
-        }
+        if self.repository.count_documents() == 0:
+            raise ValueError(
+                "Search index is empty. Run `search --rebuild-index` first."
+            )
         query_embedding = self.get_query_embedding(
             query,
             show_progress=show_progress,
         )
-
-        results = []
-        for match in self.repository.search_documents(
+        matches = self.repository.search_documents(
             query_embedding=query_embedding,
             limit=limit,
             threshold=threshold,
-        ):
+        )
+        aggregate_by_short_name = {
+            aggregate.short_name: aggregate
+            for aggregate in self.aggregates.get_by_short_names(
+                [match.aggregate_short_name for match in matches]
+            )
+        }
+
+        results = []
+        for match in matches:
             aggregate = aggregate_by_short_name.get(match.aggregate_short_name)
             if aggregate is None:
                 continue
-            results.append(AggregateSearchResult(aggregate=aggregate, score=match.score))
+            results.append(
+                AggregateSearchResult(aggregate=aggregate, score=match.score)
+            )
 
         return results

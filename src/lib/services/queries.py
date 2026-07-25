@@ -1,13 +1,17 @@
-import os
-from contextlib import AbstractContextManager
-from typing import List
+from __future__ import annotations
 
-from lib.models.aggregates import Aggregate, Torrent
-from lib.qbittorrent import QbittorrentClient
-from lib.sql.repositories import SqliteAggregateRepository
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
+    from lib.models.aggregates import Aggregate, Torrent
+    from lib.qbittorrent import QbittorrentClient
+    from lib.sql.repositories import SqliteAggregateRepository
 
 
-def get_torrent_display_path(save_path: str, files: List[str]) -> str:
+def get_torrent_display_path(save_path: str, files: list[str]) -> str:
     if not files:
         return save_path
     top_levels = set()
@@ -16,9 +20,8 @@ def get_torrent_display_path(save_path: str, files: List[str]) -> str:
         if parts:
             top_levels.add(parts[0])
     if len(top_levels) == 1:
-        return os.path.join(save_path, list(top_levels)[0])
-    else:
-        return save_path
+        return str(Path(save_path) / next(iter(top_levels)))
+    return save_path
 
 
 class AggregateQueryService:
@@ -39,11 +42,11 @@ class AggregateQueryService:
 
     def list_aggregates(
         self,
-        filter_short_name: List[str] | None = None,
-        filter_torrent_hashes: List[str] | None = None,
-        filter_bangumi_subject_name: List[str] | None = None,
-        filter_bangumi_subject_cn_name: List[str] | None = None,
-    ) -> List[Aggregate]:
+        filter_short_name: list[str] | None = None,
+        filter_torrent_hashes: list[str] | None = None,
+        filter_bangumi_subject_name: list[str] | None = None,
+        filter_bangumi_subject_cn_name: list[str] | None = None,
+    ) -> list[Aggregate]:
         filter_short_name = filter_short_name or []
         filter_torrent_hashes = filter_torrent_hashes or []
         filter_bangumi_subject_name = filter_bangumi_subject_name or []
@@ -64,6 +67,10 @@ class AggregateQueryService:
                 filter_bangumi_subject_name,
                 filter_bangumi_subject_cn_name,
             )
+
+    def get_by_short_names(self, short_names: list[str]) -> list[Aggregate]:
+        with self.get_repository(write=False) as repo:
+            return repo.get_by_short_names(short_names)
 
     def get_torrent_display_path(self, torrent: Torrent) -> str:
         self.qbit.login()

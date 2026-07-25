@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from typing import override
+from typing import TYPE_CHECKING, override
 
 import click
 
@@ -14,8 +14,10 @@ from config import Config, SearchConfig, load_config
 from lib.models.aggregates import Aggregate, Torrent
 from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot, BangumiTag
 from lib.search import AggregateSearchManager
-from lib.search.repositories import SearchRepository
 from scripts.sandbox import warn_if_sandboxed
+
+if TYPE_CHECKING:
+    from lib.search.repositories import SearchRepository
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +26,14 @@ class FakeSearchManager(AggregateSearchManager):
     def __init__(
         self,
         config: SearchConfig,
+        aggregates: list[Aggregate],
         repository: SearchRepository | None = None,
     ):
-        super().__init__(config=config, repository=repository)
+        super().__init__(
+            config=config,
+            aggregates=StaticAggregateProvider(aggregates),
+            repository=repository,
+        )
         self.encode_call_count = 0
         self.encoded_text_count = 0
 
@@ -40,6 +47,24 @@ class FakeSearchManager(AggregateSearchManager):
         self.encode_call_count += 1
         self.encoded_text_count += len(texts)
         return [fake_embedding(text) for text in texts]
+
+
+class StaticAggregateProvider:
+    def __init__(self, aggregates: list[Aggregate]):
+        self.aggregates = aggregates
+
+    def list_aggregates(self) -> list[Aggregate]:
+        return self.aggregates
+
+    def get_by_short_names(self, short_names: list[str]) -> list[Aggregate]:
+        aggregate_by_short_name = {
+            aggregate.short_name: aggregate for aggregate in self.aggregates
+        }
+        return [
+            aggregate_by_short_name[short_name]
+            for short_name in short_names
+            if short_name in aggregate_by_short_name
+        ]
 
 
 def fake_embedding(text: str) -> list[float]:
@@ -131,18 +156,21 @@ class BaseSearchE2ETest(unittest.TestCase):
         expected_queries: list[str],
     ) -> None:
         query_cache = manager.load_query_cache()
-        self.assertEqual([entry.query for entry in query_cache.queries], expected_queries)
+        self.assertEqual(
+            [entry.query for entry in query_cache.queries],
+            expected_queries,
+        )
 
 
 class MockedSearchE2ETest(BaseSearchE2ETest):
     def test_fake_embedding_search_index_and_cache_flow(self) -> None:
         logger.info("test step: initialize deterministic LanceDB search index")
-        manager = FakeSearchManager(self.config)
-        manager.rebuild(self.aggregate_fixtures())
+        aggregates = self.aggregate_fixtures()
+        manager = FakeSearchManager(self.config, aggregates)
+        manager.rebuild()
 
         logger.info("test step: run deterministic search")
         results = manager.search(
-            self.aggregate_fixtures(),
             "alpha",
             limit=2,
             threshold=0.75,
@@ -157,7 +185,6 @@ class MockedSearchE2ETest(BaseSearchE2ETest):
             "test step: verify repeated search reuses document index and query cache"
         )
         second_results = manager.search(
-            self.aggregate_fixtures(),
             "alpha",
             limit=2,
             threshold=0.75,
@@ -172,11 +199,9 @@ class MockedSearchE2ETest(BaseSearchE2ETest):
 
         logger.info("test step: force index refresh")
         manager.rebuild(
-            self.aggregate_fixtures(),
             force=True,
         )
         refreshed_results = manager.search(
-            self.aggregate_fixtures(),
             "alpha",
             limit=2,
             threshold=0.75,
@@ -212,13 +237,14 @@ class SearchE2ETest(BaseSearchE2ETest):
             embedding_device=self.device_override
             or base_search_config.embedding_device,
         )
+        aggregates = self.aggregate_fixtures()
         manager = AggregateSearchManager(
             config=search_config,
+            aggregates=StaticAggregateProvider(aggregates),
             local_files_only=not self.allow_download,
         )
-        aggregates = self.aggregate_fixtures()
-        manager.rebuild(aggregates)
-        results = manager.search(aggregates, "alpha subject", limit=2)
+        manager.rebuild()
+        results = manager.search("alpha subject", limit=2)
 
         self.assertTrue(results)
         self.assert_search_store_written()
@@ -262,7 +288,9 @@ def search_e2e(
     SearchE2ETest.base_config = config or load_config()
 
     suite = unittest.TestSuite()
-    suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(MockedSearchE2ETest))
+    suite.addTests(
+        unittest.defaultTestLoader.loadTestsFromTestCase(MockedSearchE2ETest)
+    )
     if no_mock_embedding:
         suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(SearchE2ETest))
 

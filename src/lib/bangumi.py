@@ -41,7 +41,7 @@ class BangumiClient:
         url = f"{self.base_url}/v0/subjects/{subject_id}"
         response = self.session.get(url)
         response.raise_for_status()
-        return cast(BangumiSubjectResponse, response.json())
+        return cast("BangumiSubjectResponse", response.json())
 
     def get_subject_snapshot(self, subject_id: int) -> BangumiSubjectSnapshot:
         data = self.get_subject(subject_id)

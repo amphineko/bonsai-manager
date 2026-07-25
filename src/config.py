@@ -48,10 +48,10 @@ class QbittorrentConfig:
     def from_env(cls, environs: dict[str, str]) -> QbittorrentConfig:
         try:
             port = int(environs.get("QBIT_PORT", "8080"))
-        except ValueError:
+        except ValueError as exc:
             raise ValueError(
                 f"QBIT_PORT must be an integer, got {environs.get('QBIT_PORT')}"
-            )
+            ) from exc
 
         return cls(
             host=environs.get("QBIT_HOST", "http://localhost"),
@@ -69,10 +69,9 @@ class QbittorrentConfig:
             raise ValueError(f"Invalid QBIT_HOST: {self.host!r}")
 
         scheme = parsed.scheme or "http"
-        if parsed.port is None:
-            netloc = f"{parsed.hostname}:{self.port}"
-        else:
-            netloc = parsed.netloc
+        netloc = (
+            f"{parsed.hostname}:{self.port}" if parsed.port is None else parsed.netloc
+        )
         return urlunsplit((scheme, netloc, "/api/v2", "", ""))
 
 
