@@ -13,7 +13,9 @@ import click
 from config import Config, SearchConfig, load_config
 from lib.models.aggregates import Aggregate, Torrent
 from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot, BangumiTag
+from lib.models.search import AggregateSearchDocument
 from lib.search import AggregateSearchManager
+from lib.search.repositories import LanceDbSearchRepository
 from scripts.sandbox import warn_if_sandboxed
 
 if TYPE_CHECKING:
@@ -218,6 +220,36 @@ class MockedSearchE2ETest(BaseSearchE2ETest):
         self.assertEqual(query_cache.embedding_model, "fake-e2e-model")
         self.assert_indexed_aggregates(manager, ["Alpha", "Beta"])
         self.assert_cached_queries(manager, ["alpha"])
+
+    def test_search_filters_embedding_model_before_limit(self) -> None:
+        logger.info("test step: initialize current-model LanceDB search index")
+        aggregates = self.aggregate_fixtures()
+        manager = FakeSearchManager(self.config, aggregates)
+        manager.rebuild()
+
+        logger.info("test step: add nearer old-model row to shared table")
+        old_config = replace(self.config, embedding_model="old-e2e-model")
+        old_repository = LanceDbSearchRepository(old_config)
+        old_repository.upsert_document(
+            AggregateSearchDocument(
+                aggregate_short_name="Old Model Result",
+                source_text="gamma",
+                source_hash=AggregateSearchDocument.source_hash_from_text("gamma"),
+                embedding=fake_embedding("gamma"),
+                model_name=old_config.embedding_model,
+                updated_at="2026-07-19T00:00:00+00:00",
+            )
+        )
+
+        logger.info("test step: search should ignore old-model row before limiting")
+        results = manager.search(
+            "gamma",
+            limit=1,
+            threshold=0.5,
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertIn(results[0].aggregate.short_name, {"Alpha", "Beta"})
 
 
 class SearchE2ETest(BaseSearchE2ETest):
