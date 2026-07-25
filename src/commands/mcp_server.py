@@ -7,8 +7,7 @@ from lib.models import ResponsePayload
 from lib.models.aggregates import Aggregate  # noqa: TC001
 from lib.models.qbittorrent import TorrentMappingAudit  # noqa: TC001
 from lib.models.search import AggregateSearchResults
-from lib.search import AggregateSearchManager
-from lib.services import AggregateService
+from lib.services import IndexedAggregateService
 
 mcp = FastMCP("bonsai-manager", version="0.1.0")
 
@@ -26,13 +25,6 @@ def get_config() -> Config:
     return _config
 
 
-def get_search_manager(
-    config: Config,
-    manager: AggregateService,
-) -> AggregateSearchManager:
-    return AggregateSearchManager(config.search, aggregates=manager.queries)
-
-
 @mcp.tool
 def add_aggregate(
     short_name: str,
@@ -40,10 +32,8 @@ def add_aggregate(
     torrent_hashes: list[str] | None = None,
 ) -> ResponsePayload[Aggregate]:
     """Add a new aggregate, optionally seeded by Bangumi and torrent hashes."""
-    config = get_config()
-    manager = AggregateService(config)
+    manager = IndexedAggregateService.from_config(get_config())
     aggregate = manager.add_aggregate(short_name, bangumi_subject_id, torrent_hashes)
-    get_search_manager(config, manager).index_aggregate(aggregate)
     return success(
         f"Added aggregate '{aggregate.short_name}'",
         aggregate,
@@ -53,10 +43,8 @@ def add_aggregate(
 @mcp.tool
 def remove_aggregate(short_name: str) -> ResponsePayload[Aggregate]:
     """Remove an aggregate by exact short name."""
-    config = get_config()
-    manager = AggregateService(config)
+    manager = IndexedAggregateService.from_config(get_config())
     aggregate = manager.remove_aggregate(short_name)
-    get_search_manager(config, manager).delete_aggregate(short_name)
     return success(
         f"Removed aggregate '{aggregate.short_name}'",
         aggregate,
@@ -70,7 +58,7 @@ def update_aggregate_torrents(
     remove_hashes: list[str] | None = None,
 ) -> ResponsePayload[list[str]]:
     """Add and/or remove qBittorrent torrent hashes on an existing aggregate."""
-    manager = AggregateService(get_config())
+    manager = IndexedAggregateService.from_config(get_config())
     torrent_hashes = manager.update_aggregate_torrents(
         short_name,
         add_hashes,
@@ -89,16 +77,12 @@ def update_aggregate_bangumi_subjects(
     remove_subject_ids: list[int] | None = None,
 ) -> ResponsePayload[list[int]]:
     """Add and/or remove Bangumi subject IDs on an existing aggregate."""
-    config = get_config()
-    manager = AggregateService(config)
+    manager = IndexedAggregateService.from_config(get_config())
     subject_ids = manager.update_aggregate_bangumi_subjects(
         short_name,
         add_subject_ids,
         remove_subject_ids,
     )
-    aggregates = manager.queries.get_by_short_names([short_name])
-    if aggregates:
-        get_search_manager(config, manager).index_aggregate(aggregates[0])
     return success(
         f"Updated Bangumi subjects for '{short_name}'",
         subject_ids,
@@ -119,7 +103,7 @@ def list_aggregates(
     names, or Bangumi Chinese names. For natural-language discovery, use
     search_aggregates instead.
     """
-    manager = AggregateService(get_config())
+    manager = IndexedAggregateService.from_config(get_config())
     aggregates = manager.list_aggregates(
         filter_short_name,
         filter_torrent_hashes,
@@ -146,11 +130,9 @@ def search_aggregates(
     search index; run `uv run ./src/main.py -- search --rebuild-index` from the
     CLI first. The optional threshold is a minimum cosine similarity score.
     """
-    config = get_config()
-    manager = AggregateService(config)
-    search_manager = get_search_manager(config, manager)
+    manager = IndexedAggregateService.from_config(get_config())
     try:
-        results = search_manager.search(
+        results = manager.search_aggregates(
             query,
             limit=limit,
             threshold=threshold,
@@ -173,7 +155,7 @@ def audit_torrent_mapping(
     """Audit qBittorrent torrents against stored aggregate mappings."""
     config = get_config()
     categories = category or list(config.audit_categories)
-    manager = AggregateService(config)
+    manager = IndexedAggregateService.from_config(config)
     return success(
         "Audited torrent mapping",
         manager.audit_torrent_mapping(categories),

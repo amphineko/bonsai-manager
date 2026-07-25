@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import click
@@ -8,8 +7,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
-from lib.search import AggregateSearchManager
-from lib.services import AggregateService
+from lib.services import IndexedAggregateService
 
 if TYPE_CHECKING:
     from config import Config
@@ -81,29 +79,24 @@ def search_aggregates(
     if not query and not rebuild_index:
         raise click.UsageError("Search query cannot be empty.")
 
-    manager = AggregateService(config)
-    aggregate_queries = manager.queries
-    if not aggregate_queries.list_aggregates():
+    manager = IndexedAggregateService.from_config(
+        config,
+        local_files_only=not allow_download,
+        embedding_device=device,
+    )
+    if not manager.list_aggregates():
         click.echo("The database is empty.")
         return
 
-    search_config = (
-        replace(config.search, embedding_device=device) if device else config.search
-    )
-    search_manager = AggregateSearchManager(
-        config=search_config,
-        aggregates=aggregate_queries,
-        local_files_only=not allow_download,
-    )
     if rebuild_index:
-        documents = search_manager.rebuild(
+        documents = manager.rebuild_search_index(
             force=force_rebuild,
             show_progress=True,
         )
         click.echo(f"Rebuilt search index with {len(documents)} aggregates.")
         return
 
-    results = search_manager.search(
+    results = manager.search_aggregates(
         query,
         limit=limit,
         threshold=threshold,
