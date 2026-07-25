@@ -1,4 +1,4 @@
-from typing import Generic, Literal, TypeVar
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -15,16 +15,13 @@ from lib.models.search import (
     AggregateSearchDocument,
     AggregateSearchResult,
     AggregateSearchResults,
+    SearchDocumentMatch,
     SearchQueryCache,
     SearchQueryCacheEntry,
-    SearchIndex,
 )
 
 
-DataT = TypeVar("DataT")
-
-
-class ResponsePayload(BaseModel, Generic[DataT]):
+class ResponsePayload[DataT](BaseModel):
     status: Literal["success"] = "success"
     message: str
     data: DataT
@@ -42,7 +39,7 @@ __all__ = [
     "QbittorrentTorrent",
     "QbittorrentTorrentFile",
     "ResponsePayload",
-    "SearchIndex",
+    "SearchDocumentMatch",
     "SearchQueryCache",
     "SearchQueryCacheEntry",
     "Torrent",

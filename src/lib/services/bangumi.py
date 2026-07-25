@@ -1,11 +1,16 @@
-from contextlib import AbstractContextManager
-from datetime import datetime
-from typing import List
+from __future__ import annotations
 
-from lib.bangumi import BangumiClient
-from lib.models.aggregates import Aggregate
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
 from lib.models.bangumi import BangumiSubject
-from lib.sql.repositories import SqliteAggregateRepository
+
+if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
+    from lib.bangumi import BangumiClient
+    from lib.models.aggregates import Aggregate
+    from lib.sql.repositories import SqliteAggregateRepository
 
 
 class AggregateBangumiService:
@@ -24,8 +29,8 @@ class AggregateBangumiService:
     ) -> AbstractContextManager[SqliteAggregateRepository]:
         return self.repository.get_repository(write=write)
 
-    def build_subjects(self, subject_ids: List[int]) -> List[BangumiSubject]:
-        now = datetime.now().isoformat()
+    def build_subjects(self, subject_ids: list[int]) -> list[BangumiSubject]:
+        now = datetime.now(UTC).isoformat()
         return [
             BangumiSubject(
                 subject_id=subject_id,
@@ -38,9 +43,9 @@ class AggregateBangumiService:
     def update_aggregate_bangumi_subjects(
         self,
         short_name: str,
-        add_subject_ids: List[int] | None = None,
-        remove_subject_ids: List[int] | None = None,
-    ) -> List[int]:
+        add_subject_ids: list[int] | None = None,
+        remove_subject_ids: list[int] | None = None,
+    ) -> list[int]:
         add_subject_ids = add_subject_ids or []
         remove_subject_ids = remove_subject_ids or []
         if len(set(add_subject_ids)) != len(add_subject_ids):
@@ -94,8 +99,8 @@ class AggregateBangumiService:
         self,
         short_name: str,
         target_entry: Aggregate,
-        add_subject_ids: List[int],
-        remove_subject_ids: List[int],
+        add_subject_ids: list[int],
+        remove_subject_ids: list[int],
     ) -> None:
         current_subject_ids = [
             subject.subject_id for subject in target_entry.bangumi_subjects

@@ -1,13 +1,18 @@
-from contextlib import AbstractContextManager
-from typing import List
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from lib.models.qbittorrent import (
     TorrentMappingAudit,
     TorrentMappingLocation,
     TrackedTorrentMapping,
 )
-from lib.qbittorrent import QbittorrentClient
-from lib.sql.repositories import SqliteAggregateRepository
+
+if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
+    from lib.qbittorrent import QbittorrentClient
+    from lib.sql.repositories import SqliteAggregateRepository
 
 
 class AggregateAuditService:
@@ -30,7 +35,7 @@ class AggregateAuditService:
 
     def audit_torrent_mapping(
         self,
-        categories: List[str] | None = None,
+        categories: list[str] | None = None,
     ) -> TorrentMappingAudit:
         categories = categories or list(self.audit_categories)
         with self.get_repository(write=False) as repo:
@@ -44,9 +49,9 @@ class AggregateAuditService:
             for torrent in entry.torrents:
                 hash_locations.setdefault(torrent.hash, []).append(entry.short_name)
 
-        tracked_found: List[TrackedTorrentMapping] = []
-        tracked_missing: List[TorrentMappingLocation] = []
-        duplicates: List[TorrentMappingLocation] = []
+        tracked_found: list[TrackedTorrentMapping] = []
+        tracked_missing: list[TorrentMappingLocation] = []
+        duplicates: list[TorrentMappingLocation] = []
 
         for torrent_hash, locations in hash_locations.items():
             if len(locations) > 1:

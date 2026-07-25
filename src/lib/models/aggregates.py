@@ -1,8 +1,6 @@
-from typing import List
-
 from pydantic import BaseModel, Field
 
-from lib.models.bangumi import BangumiSubject
+from lib.models.bangumi import BangumiSubject  # noqa: TC001
 
 
 class Torrent(BaseModel):
@@ -12,9 +10,9 @@ class Torrent(BaseModel):
 class Aggregate(BaseModel):
     short_name: str
     category: str = "anime"
-    bangumi_subjects: List[BangumiSubject] = Field(default_factory=list)
-    torrents: List[Torrent] = Field(default_factory=list)
+    bangumi_subjects: list[BangumiSubject] = Field(default_factory=list)
+    torrents: list[Torrent] = Field(default_factory=list)
 
 
 class Database(BaseModel):
-    entries: List[Aggregate]
+    entries: list[Aggregate]

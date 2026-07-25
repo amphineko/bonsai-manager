@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from sqlalchemy import ForeignKey, String, Text, create_engine, delete, event, or_, select
+from sqlalchemy import (
+    ForeignKey,
+    String,
+    Text,
+    create_engine,
+    delete,
+    event,
+    or_,
+    select,
+)
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -18,19 +26,28 @@ from sqlalchemy.orm import (
     selectinload,
     sessionmaker,
 )
-from sqlalchemy.sql.elements import ColumnElement
 
 from lib.models.aggregates import Aggregate, Torrent
 from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from sqlalchemy.sql.elements import ColumnElement
+
 
 class AggregateRepository(Protocol):
-    def get_repository(self, *, write: bool) -> AbstractContextManager[AggregateRepository]:
-        ...
+    def get_repository(
+        self,
+        *,
+        write: bool,
+    ) -> AbstractContextManager[AggregateRepository]: ...
 
     def list_all(self) -> list[Aggregate]: ...
 
     def get_by_short_name(self, short_name: str) -> Aggregate | None: ...
+
+    def get_by_short_names(self, short_names: list[str]) -> list[Aggregate]: ...
 
     def get_by_torrent_hash(self, torrent_hash: str) -> Aggregate | None: ...
 
@@ -164,7 +181,9 @@ class SqliteAggregateRepository:
     @contextmanager
     def get_repository(self, *, write: bool) -> Iterator[SqliteAggregateRepository]:
         if self.session_factory is None:
-            raise RuntimeError("Cannot open a repository from a session-bound repository.")
+            raise RuntimeError(
+                "Cannot open a repository from a session-bound repository."
+            )
 
         with self.session_factory() as session:
             if write:
@@ -215,6 +234,30 @@ class SqliteAggregateRepository:
             .options(*aggregate_load_options())
         )
         return aggregate_from_row(row) if row else None
+
+    def get_by_short_names(self, short_names: list[str]) -> list[Aggregate]:
+        if not short_names:
+            return []
+        if self.session is None:
+            with self.get_repository(write=False) as repo:
+                return repo.get_by_short_names(short_names)
+
+        session = self.require_session()
+        rows = list(
+            session.scalars(
+                select(AggregateRow)
+                .where(AggregateRow.short_name.in_(short_names))
+                .options(*aggregate_load_options())
+            )
+        )
+        aggregate_by_short_name = {
+            row.short_name: aggregate_from_row(row) for row in rows
+        }
+        return [
+            aggregate_by_short_name[short_name]
+            for short_name in short_names
+            if short_name in aggregate_by_short_name
+        ]
 
     def get_by_torrent_hash(self, torrent_hash: str) -> Aggregate | None:
         if self.session is None:
@@ -316,7 +359,9 @@ class SqliteAggregateRepository:
 
         session = self.require_session()
         aggregate_id = aggregate_id_for_short_name(session, short_name)
-        session.execute(delete(TorrentRow).where(TorrentRow.aggregate_id == aggregate_id))
+        session.execute(
+            delete(TorrentRow).where(TorrentRow.aggregate_id == aggregate_id)
+        )
         session.add_all(
             TorrentRow(hash=torrent.hash, aggregate_id=aggregate_id)
             for torrent in sorted(torrents, key=lambda item: item.hash)

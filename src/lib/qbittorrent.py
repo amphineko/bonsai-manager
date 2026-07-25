@@ -1,7 +1,5 @@
-from typing import List, Optional
-
-from pydantic import TypeAdapter
 import requests
+from pydantic import TypeAdapter
 
 from config import QbittorrentConfig, load_config
 from lib.models.qbittorrent import QbittorrentTorrent, QbittorrentTorrentFile
@@ -24,21 +22,21 @@ class QbittorrentClient:
         )
         resp.raise_for_status()
 
-    def get_all_torrents(self) -> List[QbittorrentTorrent]:
+    def get_all_torrents(self) -> list[QbittorrentTorrent]:
         info_url = f"{self.base_url}/torrents/info"
         resp = self.session.get(info_url)
         resp.raise_for_status()
-        return TypeAdapter(List[QbittorrentTorrent]).validate_python(resp.json())
+        return TypeAdapter(list[QbittorrentTorrent]).validate_python(resp.json())
 
-    def get_torrent_info(self, torrent_hash: str) -> Optional[QbittorrentTorrent]:
+    def get_torrent_info(self, torrent_hash: str) -> QbittorrentTorrent | None:
         info_url = f"{self.base_url}/torrents/info"
         resp = self.session.get(info_url, params={"hashes": torrent_hash})
         resp.raise_for_status()
-        data = TypeAdapter(List[QbittorrentTorrent]).validate_python(resp.json())
+        data = TypeAdapter(list[QbittorrentTorrent]).validate_python(resp.json())
         return data[0] if data else None
 
-    def get_torrent_files(self, torrent_hash: str) -> List[QbittorrentTorrentFile]:
+    def get_torrent_files(self, torrent_hash: str) -> list[QbittorrentTorrentFile]:
         files_url = f"{self.base_url}/torrents/files"
         resp = self.session.get(files_url, params={"hash": torrent_hash})
         resp.raise_for_status()
-        return TypeAdapter(List[QbittorrentTorrentFile]).validate_python(resp.json())
+        return TypeAdapter(list[QbittorrentTorrentFile]).validate_python(resp.json())

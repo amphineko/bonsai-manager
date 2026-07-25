@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING
 
 import click
 from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
-from mcp.types import CallToolResult
 from rich.pretty import pprint
 
 from config import PROJECT_ROOT
@@ -14,7 +14,11 @@ from lib.models import ResponsePayload
 from lib.models.search import AggregateSearchResults
 from scripts.sandbox import warn_if_sandboxed
 
+if TYPE_CHECKING:
+    from mcp.types import CallToolResult
+
 MCP_TIMEOUT_SECONDS = 30.0
+
 
 async def call_search_aggregates(query: str) -> CallToolResult:
     transport = StdioTransport(

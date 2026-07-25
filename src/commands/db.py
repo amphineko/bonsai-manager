@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 from pydantic import TypeAdapter
 
-from config import Config
 from lib.models.aggregates import Aggregate
 from lib.sql import SqliteAggregateRepository
+
+if TYPE_CHECKING:
+    from config import Config
 
 DEFAULT_JSON_DB_PATH = Path("db.json")
 
@@ -70,9 +73,7 @@ def validate(config: Config, path: Path | None) -> None:
     torrent_count = sum(len(aggregate.torrents) for aggregate in aggregates)
     subject_count = sum(len(aggregate.bangumi_subjects) for aggregate in aggregates)
     click.echo(
-        "Database valid: "
-        f"{len(aggregates)} aggregates, "
-        f"{torrent_count} torrents, "
+        f"Database valid: {len(aggregates)} aggregates, {torrent_count} torrents, "
         f"{subject_count} Bangumi subjects."
     )
 
@@ -102,7 +103,7 @@ def validate_aggregates(aggregates: list[Aggregate]) -> None:
             existing = torrent_hashes.get(torrent.hash)
             if existing is not None:
                 raise click.ClickException(
-                    f"Duplicate torrent hash {torrent.hash}: "
-                    f"{existing} and {aggregate.short_name}"
+                    f"Duplicate torrent hash {torrent.hash}: {existing} and "
+                    f"{aggregate.short_name}"
                 )
             torrent_hashes[torrent.hash] = aggregate.short_name

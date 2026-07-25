@@ -1,10 +1,16 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import click
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
-from config import Config
 from lib.services import AggregateService
+
+if TYPE_CHECKING:
+    from config import Config
 
 
 @click.command(name="audit")
@@ -78,5 +84,5 @@ def audit_torrent_mapping(config: Config, category: tuple[str, ...]) -> None:
         else:
             click.echo("No unmapped torrents found in the specified categories.")
 
-    except Exception as exc:
-        click.echo(f"Error during qBittorrent inspection: {str(exc)}")
+    except RuntimeError as exc:
+        click.echo(f"Error during qBittorrent inspection: {exc!s}")

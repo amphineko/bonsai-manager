@@ -48,10 +48,10 @@ class QbittorrentConfig:
     def from_env(cls, environs: dict[str, str]) -> QbittorrentConfig:
         try:
             port = int(environs.get("QBIT_PORT", "8080"))
-        except ValueError:
+        except ValueError as exc:
             raise ValueError(
                 f"QBIT_PORT must be an integer, got {environs.get('QBIT_PORT')}"
-            )
+            ) from exc
 
         return cls(
             host=environs.get("QBIT_HOST", "http://localhost"),
@@ -69,10 +69,9 @@ class QbittorrentConfig:
             raise ValueError(f"Invalid QBIT_HOST: {self.host!r}")
 
         scheme = parsed.scheme or "http"
-        if parsed.port is None:
-            netloc = f"{parsed.hostname}:{self.port}"
-        else:
-            netloc = parsed.netloc
+        netloc = (
+            f"{parsed.hostname}:{self.port}" if parsed.port is None else parsed.netloc
+        )
         return urlunsplit((scheme, netloc, "/api/v2", "", ""))
 
 
@@ -93,8 +92,7 @@ class BangumiConfig:
 
 @dataclass
 class SearchConfig:
-    index_path: Path
-    query_cache_path: Path
+    lancedb_path: Path
 
     embedding_model: str
     embedding_query_prompt_model_marker: str
@@ -103,16 +101,8 @@ class SearchConfig:
     @classmethod
     def from_env(cls, environs: dict[str, str]) -> SearchConfig:
         return cls(
-            index_path=resolve_project_path(
-                Path(environs.get("SEARCH_INDEX_PATH", "aggregate_search_index.json"))
-            ),
-            query_cache_path=resolve_project_path(
-                Path(
-                    environs.get(
-                        "SEARCH_QUERY_CACHE_PATH",
-                        "aggregate_search_query_cache.json",
-                    )
-                )
+            lancedb_path=resolve_project_path(
+                Path(environs.get("SEARCH_LANCEDB_PATH", "aggregate_search.lancedb"))
             ),
             embedding_model=environs.get(
                 "EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-0.6B"

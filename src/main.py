@@ -1,10 +1,10 @@
 import click
 
-from commands.list import list_entries
+from commands.audit import audit_torrent_mapping
 from commands.db import db_commands
+from commands.list import list_entries
 from commands.mcp_server import run_mcp_server
 from commands.search import search_aggregates
-from commands.audit import audit_torrent_mapping
 from commands.tui import launch_tui
 from commands.web import serve
 from config import Config, load_config

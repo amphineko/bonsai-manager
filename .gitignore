@@ -26,3 +26,4 @@ db.json
 # Generated search cache
 aggregate_search_index.json
 aggregate_search_query_cache.json
+aggregate_search.lancedb/
