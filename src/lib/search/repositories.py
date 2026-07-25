@@ -121,6 +121,7 @@ class LanceDbSearchRepository:
             db.open_table(DOCUMENTS_TABLE)
             .search(query_embedding, vector_column_name="vector")
             .metric("cosine")
+            .where(f"embedding_model = {lance_sql_string(self.config.embedding_model)}")
             .limit(limit)
             .to_list()
         )
