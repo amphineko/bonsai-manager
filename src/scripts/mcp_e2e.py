@@ -23,6 +23,7 @@ from config import PROJECT_ROOT
 from lib.models import ResponsePayload
 from lib.models.aggregates import Aggregate, Torrent
 from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot, BangumiTag
+from lib.models.search import SearchIndexRebuildResult
 from scripts.sandbox import warn_if_sandboxed
 
 MCP_TIMEOUT_SECONDS = 30.0
@@ -238,6 +239,18 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
             if not isinstance(summary_content, TextResourceContents):
                 self.fail("Aggregate summary resource did not return text content.")
             self.assertEqual(json.loads(summary_content.text), {"total": 1})
+
+            logger.info("test step: rebuild search index")
+            rebuilt = await call_tool(client, "rebuild_search_index", {})
+            rebuilt_result = (
+                TypeAdapter(ResponsePayload[SearchIndexRebuildResult])
+                .validate_python(rebuilt)
+                .data
+            )
+            self.assertEqual(
+                rebuilt_result,
+                SearchIndexRebuildResult(indexed_documents=1, force=False),
+            )
 
             logger.info("test step: list aggregate after add")
             listed = await call_tool(

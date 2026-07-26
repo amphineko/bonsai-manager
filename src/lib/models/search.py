@@ -81,3 +81,8 @@ class AggregateSearchResult(BaseModel):
 
 class AggregateSearchResults(BaseModel):
     results: list[AggregateSearchResult]
+
+
+class SearchIndexRebuildResult(BaseModel):
+    indexed_documents: int
+    force: bool

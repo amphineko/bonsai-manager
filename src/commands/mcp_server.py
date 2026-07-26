@@ -6,7 +6,7 @@ from config import Config, load_config
 from lib.models import ResponsePayload
 from lib.models.aggregates import Aggregate  # noqa: TC001
 from lib.models.qbittorrent import TorrentMappingAudit  # noqa: TC001
-from lib.models.search import AggregateSearchResults
+from lib.models.search import AggregateSearchResults, SearchIndexRebuildResult
 from lib.services import IndexedAggregateService
 
 mcp = FastMCP("bonsai-manager", version="0.1.0")
@@ -134,8 +134,8 @@ def search_aggregates(
     Use this for fuzzy semantic discovery, vague descriptions, translated title
     fragments, or cross-language title search. For exact torrent hashes or known
     SQLite GLOB patterns, use list_aggregates instead. Requires an initialized
-    search index; run `uv run ./src/main.py -- search --rebuild-index` from the
-    CLI first. The optional threshold is a minimum cosine similarity score.
+    search index; call rebuild_search_index first if the index is empty, stale,
+    or incomplete. The optional threshold is a minimum cosine similarity score.
     """
     manager = IndexedAggregateService.from_config(get_config())
     try:
@@ -152,6 +152,24 @@ def search_aggregates(
     return success(
         "Searched aggregates",
         AggregateSearchResults(results=results),
+    )
+
+
+@mcp.tool
+def rebuild_search_index(
+    force: bool = False,
+) -> ResponsePayload[SearchIndexRebuildResult]:
+    """Rebuild the semantic search index from the SQLite aggregate database.
+
+    Use this when search_aggregates reports that the index is empty, stale, or
+    incomplete. Set force to recompute every aggregate embedding even if its
+    indexed source hash already matches the SQLite aggregate metadata.
+    """
+    manager = IndexedAggregateService.from_config(get_config())
+    documents = manager.rebuild_search_index(force=force)
+    return success(
+        f"Rebuilt search index with {len(documents)} aggregates",
+        SearchIndexRebuildResult(indexed_documents=len(documents), force=force),
     )
 
 
