@@ -134,7 +134,7 @@ class MockHttpServer:
 
     @property
     def port(self) -> int:
-        return int(self.server.server_port)
+        return self.server.server_port
 
     @property
     def base_url(self) -> str:
@@ -214,6 +214,14 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
             env=env,
         )
         async with Client(transport) as client:
+            logger.info(
+                "test step: MCP context parameters are hidden from tool schemas"
+            )
+            for tool in await client.list_tools():
+                properties = tool.inputSchema.get("properties", {})
+                self.assertNotIn("context", properties)
+                self.assertNotIn("_fastmcp_context", properties)
+
             logger.info(
                 "test step: health check reports missing stores without creating them"
             )

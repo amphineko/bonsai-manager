@@ -37,6 +37,9 @@ class BangumiClient:
         if self.token:
             self.session.headers["Authorization"] = f"Bearer {self.token}"
 
+    def close(self) -> None:
+        self.session.close()
+
     def get_subject(self, subject_id: int) -> BangumiSubjectResponse:
         url = f"{self.base_url}/v0/subjects/{subject_id}"
         response = self.session.get(url)

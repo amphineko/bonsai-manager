@@ -34,7 +34,7 @@ from lib.models.aggregates import Aggregate, Torrent
 from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
     from sqlalchemy.sql.elements import ColumnElement
 
@@ -178,6 +178,10 @@ class SqliteAggregateRepository:
         if create:
             self.initialize()
 
+    def close(self) -> None:
+        if self.engine is not None:
+            self.engine.dispose()
+
     def initialize(self) -> None:
         if self.engine is None:
             raise RuntimeError("Cannot initialize a session-bound repository.")
@@ -196,7 +200,7 @@ class SqliteAggregateRepository:
                 return False
             try:
                 column_names = {
-                    str(column["name"]) for column in inspector.get_columns(table_name)
+                    column["name"] for column in inspector.get_columns(table_name)
                 }
             except SQLAlchemyError:
                 return False
@@ -205,7 +209,7 @@ class SqliteAggregateRepository:
         return True
 
     @contextmanager
-    def get_repository(self, *, write: bool) -> Iterator[SqliteAggregateRepository]:
+    def get_repository(self, *, write: bool) -> Generator[SqliteAggregateRepository]:
         if self.session_factory is None:
             raise RuntimeError(
                 "Cannot open a repository from a session-bound repository."
@@ -254,7 +258,7 @@ class SqliteAggregateRepository:
                 return repo.count_aggregates()
 
         session = self.require_session()
-        return int(session.scalar(select(func.count()).select_from(AggregateRow)) or 0)
+        return session.scalar(select(func.count()).select_from(AggregateRow)) or 0
 
     def get_by_short_name(self, short_name: str) -> Aggregate | None:
         if self.session is None:

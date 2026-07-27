@@ -22,6 +22,9 @@ class IndexedAggregateService:
         self.aggregates = aggregates
         self.search = search
 
+    def close(self) -> None:
+        self.aggregates.close()
+
     @classmethod
     def from_config(
         cls,

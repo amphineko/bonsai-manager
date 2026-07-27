@@ -40,6 +40,11 @@ class AggregateService:
             self.config.audit_categories,
         )
 
+    def close(self) -> None:
+        self.qbit.close()
+        self.bangumi_client.close()
+        self.repository.close()
+
     def add_aggregate(
         self,
         short_name: str,
