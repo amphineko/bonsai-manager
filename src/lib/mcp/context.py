@@ -12,6 +12,8 @@ class McpContext:
         self.config = config
         self._indexed_service: IndexedAggregateService | None = None
         self._service_lock = Lock()
+        self._health_report: HealthCheckReport | None = None
+        self._health_lock = Lock()
 
     @property
     def indexed(self) -> IndexedAggregateService:
@@ -24,8 +26,19 @@ class McpContext:
         with self._service_lock:
             service = self._indexed_service
         if service is None:
-            return IndexedAggregateService.check_health_from_config(self.config)
-        return service.check_health()
+            report = IndexedAggregateService.check_health_from_config(self.config)
+        else:
+            report = service.check_health()
+        with self._health_lock:
+            self._health_report = report
+        return report
+
+    def check_health_once(self) -> HealthCheckReport:
+        with self._health_lock:
+            report = self._health_report
+        if report is None:
+            return self.check_health()
+        return report
 
     def close(self) -> None:
         with self._service_lock:

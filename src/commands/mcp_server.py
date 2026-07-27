@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from functools import wraps
 from typing import TYPE_CHECKING
 
 import click
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 from fastmcp.server.lifespan import lifespan
 
 from config import Config
@@ -15,7 +17,7 @@ from lib.models.qbittorrent import TorrentMappingAudit
 from lib.models.search import AggregateSearchResults, SearchIndexRebuildResult
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, Callable
 
 type McpLifespanContext = dict[str, McpContext]
 
@@ -26,6 +28,21 @@ def success[DataT](message: str, data: DataT) -> ResponsePayload[DataT]:
 
 def create_mcp_server(config: Config) -> FastMCP[McpLifespanContext]:
     context = McpContext(config)
+
+    def health_gated[ReturnT, **P](
+        function: Callable[P, ReturnT],
+    ) -> Callable[P, ReturnT]:
+        @wraps(function)
+        def wrapped(*args: P.args, **kwargs: P.kwargs) -> ReturnT:
+            if not context.check_health_once().healthy:
+                raise ToolError(
+                    "Bonsai Manager health checks failed. Call check_health for "
+                    "details, then call rebuild_search_index to repair the search "
+                    "index before retrying."
+                )
+            return function(*args, **kwargs)
+
+        return wrapped
 
     @lifespan
     async def mcp_lifespan(
@@ -44,6 +61,7 @@ def create_mcp_server(config: Config) -> FastMCP[McpLifespanContext]:
         return {"total": context.indexed.count_aggregates()}
 
     @mcp.tool
+    @health_gated
     def add_aggregate(
         short_name: str,
         bangumi_subject_id: int | None = None,
@@ -61,6 +79,7 @@ def create_mcp_server(config: Config) -> FastMCP[McpLifespanContext]:
         )
 
     @mcp.tool
+    @health_gated
     def remove_aggregate(short_name: str) -> ResponsePayload[Aggregate]:
         """Remove an aggregate by exact short name."""
         aggregate = context.indexed.remove_aggregate(short_name)
@@ -70,6 +89,7 @@ def create_mcp_server(config: Config) -> FastMCP[McpLifespanContext]:
         )
 
     @mcp.tool
+    @health_gated
     def update_aggregate_torrents(
         short_name: str,
         add_hashes: list[str] | None = None,
@@ -87,6 +107,7 @@ def create_mcp_server(config: Config) -> FastMCP[McpLifespanContext]:
         )
 
     @mcp.tool
+    @health_gated
     def update_aggregate_bangumi_subjects(
         short_name: str,
         add_subject_ids: list[int] | None = None,
@@ -104,6 +125,7 @@ def create_mcp_server(config: Config) -> FastMCP[McpLifespanContext]:
         )
 
     @mcp.tool
+    @health_gated
     def list_aggregates(
         filter_short_name: list[str] | None = None,
         filter_torrent_hashes: list[str] | None = None,
@@ -129,6 +151,7 @@ def create_mcp_server(config: Config) -> FastMCP[McpLifespanContext]:
         )
 
     @mcp.tool
+    @health_gated
     def search_aggregates(
         query: str,
         limit: int = 10,
@@ -169,6 +192,7 @@ def create_mcp_server(config: Config) -> FastMCP[McpLifespanContext]:
         indexed source hash already matches the SQLite aggregate metadata.
         """
         documents = context.indexed.rebuild_search_index(force=force)
+        context.check_health()
         return success(
             f"Rebuilt search index with {len(documents)} aggregates",
             SearchIndexRebuildResult(
@@ -190,6 +214,7 @@ def create_mcp_server(config: Config) -> FastMCP[McpLifespanContext]:
         return success(message, report)
 
     @mcp.tool
+    @health_gated
     def audit_torrent_mapping(
         category: list[str] | None = None,
     ) -> ResponsePayload[TorrentMappingAudit]:

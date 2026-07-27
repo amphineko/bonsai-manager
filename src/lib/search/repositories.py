@@ -127,6 +127,15 @@ class LanceDbSearchRepository:
             return
 
         table = db.open_table(DOCUMENTS_TABLE)
+        if table.count_rows() == 0:
+            db.create_table(
+                DOCUMENTS_TABLE,
+                data=[row],
+                schema=document_schema(len(document.embedding)),
+                mode="overwrite",
+            )
+            return
+
         table.delete(
             document_filter(
                 self.config.embedding_model,
