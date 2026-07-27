@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from config import load_config
+from config import Config, load_config
 from lib.bangumi import BangumiClient
+from lib.models.aggregates import Aggregate, Torrent
+from lib.models.qbittorrent import TorrentMappingAudit
 from lib.qbittorrent import QbittorrentClient
 from lib.services.audit import AggregateAuditService
 from lib.services.bangumi import AggregateBangumiService
@@ -11,11 +11,6 @@ from lib.services.creation import AggregateCreationService
 from lib.services.queries import AggregateQueryService
 from lib.services.torrents import AggregateTorrentService
 from lib.sql.repositories import SqliteAggregateRepository
-
-if TYPE_CHECKING:
-    from config import Config
-    from lib.models.aggregates import Aggregate, Torrent
-    from lib.models.qbittorrent import TorrentMappingAudit
 
 
 class AggregateService:
@@ -44,6 +39,11 @@ class AggregateService:
             self.qbit,
             self.config.audit_categories,
         )
+
+    def close(self) -> None:
+        self.qbit.close()
+        self.bangumi_client.close()
+        self.repository.close()
 
     def add_aggregate(
         self,

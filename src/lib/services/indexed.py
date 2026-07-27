@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING
 
+from config import Config, SearchConfig
+from lib.models.aggregates import Aggregate, Torrent
+from lib.models.health import HealthCheckReport, SearchIndexConsistencyCheck
+from lib.models.qbittorrent import TorrentMappingAudit
+from lib.models.search import AggregateSearchDocument, AggregateSearchResult
 from lib.search import AggregateSearchManager
+from lib.search.repositories import LanceDbSearchRepository
 from lib.services.aggregates import AggregateService
-
-if TYPE_CHECKING:
-    from config import Config, SearchConfig
-    from lib.models.aggregates import Aggregate, Torrent
-    from lib.models.qbittorrent import TorrentMappingAudit
-    from lib.models.search import AggregateSearchDocument, AggregateSearchResult
+from lib.sql.repositories import SqliteAggregateRepository
 
 
 class IndexedAggregateService:
@@ -21,6 +21,9 @@ class IndexedAggregateService:
     ):
         self.aggregates = aggregates
         self.search = search
+
+    def close(self) -> None:
+        self.aggregates.close()
 
     @classmethod
     def from_config(
@@ -43,6 +46,64 @@ class IndexedAggregateService:
             local_files_only=local_files_only,
         )
         return cls(aggregate_service, search_manager)
+
+    @classmethod
+    def check_health_from_config(cls, config: Config) -> HealthCheckReport:
+        aggregate_repository: SqliteAggregateRepository | None = None
+        if config.database.path.is_file():
+            aggregate_repository = SqliteAggregateRepository(
+                config.database.path,
+                create=False,
+            )
+        sqlite_ready = (
+            aggregate_repository is not None and aggregate_repository.schema_is_ready()
+        )
+        search_repository = LanceDbSearchRepository(config.search)
+        lancedb_ready = search_repository.documents_table_exists()
+        if sqlite_ready and lancedb_ready:
+            if aggregate_repository is None:
+                raise AssertionError("Ready SQLite repository was not initialized.")
+            aggregate_service = AggregateService(
+                config,
+                repository=aggregate_repository,
+            )
+            return cls(
+                aggregate_service,
+                AggregateSearchManager(
+                    config.search,
+                    aggregates=aggregate_service.queries,
+                    repository=search_repository,
+                ),
+            ).check_health()
+
+        aggregate_count = 0
+        if sqlite_ready:
+            if aggregate_repository is None:
+                raise AssertionError("Ready SQLite repository was not initialized.")
+            aggregate_service = AggregateService(
+                config,
+                repository=aggregate_repository,
+            )
+            aggregate_count = aggregate_service.count_aggregates()
+
+        return HealthCheckReport(
+            healthy=False,
+            checks=[
+                SearchIndexConsistencyCheck(
+                    healthy=False,
+                    sqlite_ready=sqlite_ready,
+                    lancedb_ready=lancedb_ready,
+                    aggregate_count=aggregate_count,
+                    document_count=(
+                        search_repository.count_documents() if lancedb_ready else 0
+                    ),
+                    missing_documents=[],
+                    orphaned_documents=[],
+                    stale_documents=[],
+                    duplicate_documents=[],
+                )
+            ],
+        )
 
     def add_aggregate(
         self,
@@ -107,6 +168,13 @@ class IndexedAggregateService:
 
     def count_aggregates(self) -> int:
         return self.aggregates.count_aggregates()
+
+    def check_health(self) -> HealthCheckReport:
+        checks = [self.search.check_consistency()]
+        return HealthCheckReport(
+            healthy=all(check.healthy for check in checks),
+            checks=checks,
+        )
 
     def search_aggregates(
         self,

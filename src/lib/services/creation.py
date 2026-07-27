@@ -3,13 +3,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from lib.models.aggregates import Aggregate
+from lib.services.bangumi import AggregateBangumiService
+from lib.services.torrents import AggregateTorrentService
+from lib.sql.repositories import SqliteAggregateRepository
 
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
-
-    from lib.services.bangumi import AggregateBangumiService
-    from lib.services.torrents import AggregateTorrentService
-    from lib.sql.repositories import SqliteAggregateRepository
 
 
 class AggregateCreationService:

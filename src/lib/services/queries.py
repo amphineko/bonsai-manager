@@ -3,12 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from lib.models.aggregates import Aggregate, Torrent
+from lib.qbittorrent import QbittorrentClient
+from lib.sql.repositories import SqliteAggregateRepository
+
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
-
-    from lib.models.aggregates import Aggregate, Torrent
-    from lib.qbittorrent import QbittorrentClient
-    from lib.sql.repositories import SqliteAggregateRepository
 
 
 def get_torrent_display_path(save_path: str, files: list[str]) -> str:

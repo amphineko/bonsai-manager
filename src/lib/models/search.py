@@ -2,7 +2,7 @@ import hashlib
 
 from pydantic import BaseModel, Field
 
-from lib.models.aggregates import Aggregate  # noqa: TC001
+from lib.models.aggregates import Aggregate
 
 
 class AggregateSearchDocument(BaseModel):
@@ -55,6 +55,12 @@ class AggregateSearchDocument(BaseModel):
         )
 
 
+class AggregateSearchDocumentMetadata(BaseModel):
+    aggregate_short_name: str
+    source_hash: str
+    model_name: str
+
+
 class SearchDocumentMatch(BaseModel):
     aggregate_short_name: str
     score: float
@@ -81,3 +87,8 @@ class AggregateSearchResult(BaseModel):
 
 class AggregateSearchResults(BaseModel):
     results: list[AggregateSearchResult]
+
+
+class SearchIndexRebuildResult(BaseModel):
+    indexed_documents: int
+    force: bool

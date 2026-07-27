@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, override
+from typing import override
 
 import click
 
@@ -15,11 +15,8 @@ from lib.models.aggregates import Aggregate, Torrent
 from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot, BangumiTag
 from lib.models.search import AggregateSearchDocument
 from lib.search import AggregateSearchManager
-from lib.search.repositories import LanceDbSearchRepository
+from lib.search.repositories import LanceDbSearchRepository, SearchRepository
 from scripts.sandbox import warn_if_sandboxed
-
-if TYPE_CHECKING:
-    from lib.search.repositories import SearchRepository
 
 logger = logging.getLogger(__name__)
 
@@ -250,6 +247,49 @@ class MockedSearchE2ETest(BaseSearchE2ETest):
 
         self.assertEqual(len(results), 1)
         self.assertIn(results[0].aggregate.short_name, {"Alpha", "Beta"})
+
+    def test_search_index_consistency_check(self) -> None:
+        logger.info("test step: build a consistent search index")
+        aggregates = self.aggregate_fixtures()
+        manager = FakeSearchManager(self.config, aggregates)
+        manager.rebuild()
+
+        healthy_check = manager.check_consistency()
+        self.assertTrue(healthy_check.healthy)
+        self.assertEqual(healthy_check.aggregate_count, 2)
+        self.assertEqual(healthy_check.document_count, 2)
+
+        logger.info("test step: introduce missing, orphaned, and stale documents")
+        manager.delete_aggregate("Alpha")
+        manager.repository.upsert_document(
+            AggregateSearchDocument(
+                aggregate_short_name="Beta",
+                source_text="stale beta",
+                source_hash=AggregateSearchDocument.source_hash_from_text("stale beta"),
+                embedding=fake_embedding("beta"),
+                model_name=self.config.embedding_model,
+                updated_at="2026-07-19T00:00:00+00:00",
+            )
+        )
+        manager.repository.upsert_document(
+            AggregateSearchDocument(
+                aggregate_short_name="Orphan",
+                source_text="orphan",
+                source_hash=AggregateSearchDocument.source_hash_from_text("orphan"),
+                embedding=fake_embedding("orphan"),
+                model_name=self.config.embedding_model,
+                updated_at="2026-07-19T00:00:00+00:00",
+            )
+        )
+
+        unhealthy_check = manager.check_consistency()
+        self.assertFalse(unhealthy_check.healthy)
+        self.assertEqual(unhealthy_check.aggregate_count, 2)
+        self.assertEqual(unhealthy_check.document_count, 2)
+        self.assertEqual(unhealthy_check.missing_documents, ["Alpha"])
+        self.assertEqual(unhealthy_check.orphaned_documents, ["Orphan"])
+        self.assertEqual(unhealthy_check.stale_documents, ["Beta"])
+        self.assertEqual(unhealthy_check.duplicate_documents, [])
 
 
 class SearchE2ETest(BaseSearchE2ETest):

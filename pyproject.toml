@@ -24,6 +24,7 @@ dependencies = [
 [tool.pyrefly]
 preset = "strict"
 project-includes = ["**/*.py*", "**/*.ipynb"]
+min-severity = "warn"
 
 [dependency-groups]
 dev = [
@@ -49,7 +50,7 @@ extend-select = [
     "TID",
     "W",
 ]
-ignore = []
+ignore = ["TC001"]
 fixable = ["ALL"]
 unfixable = []
 

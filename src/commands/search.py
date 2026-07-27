@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import click
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
+from config import Config
+from lib.models.aggregates import Aggregate
 from lib.services import IndexedAggregateService
-
-if TYPE_CHECKING:
-    from config import Config
-    from lib.models.aggregates import Aggregate
 
 
 def format_bangumi_names(entry: Aggregate) -> str:

@@ -5,9 +5,11 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 import tempfile
 import threading
 import unittest
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Self, override
@@ -19,13 +21,16 @@ from fastmcp.client.transports import StdioTransport
 from mcp.types import TextResourceContents
 from pydantic import TypeAdapter
 
-from config import PROJECT_ROOT
+from config import PROJECT_ROOT, load_config
 from lib.models import ResponsePayload
 from lib.models.aggregates import Aggregate, Torrent
 from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot, BangumiTag
+from lib.models.health import HealthCheckReport, SearchIndexConsistencyCheck
+from lib.models.search import SearchIndexRebuildResult
+from lib.search.repositories import LanceDbSearchRepository
 from scripts.sandbox import warn_if_sandboxed
 
-MCP_TIMEOUT_SECONDS = 30.0
+MCP_TIMEOUT_SECONDS = 45.0
 
 SUBJECT_ID = 123456
 SHORT_NAME = "MCP E2E Fixture"
@@ -129,7 +134,7 @@ class MockHttpServer:
 
     @property
     def port(self) -> int:
-        return int(self.server.server_port)
+        return self.server.server_port
 
     @property
     def base_url(self) -> str:
@@ -164,12 +169,14 @@ async def call_tool(
 class McpE2ETest(unittest.IsolatedAsyncioTestCase):
     temp_dir: tempfile.TemporaryDirectory[str]
     db_path: Path
+    search_path: Path
     mock_server: MockHttpServer
 
     @override
     async def asyncSetUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory(prefix="bonsai-mcp-e2e-")
         self.db_path = Path(self.temp_dir.name) / "db.sqlite3"
+        self.search_path = Path(self.temp_dir.name) / "aggregate_search.lancedb"
         self.mock_server = MockHttpServer()
         self.mock_server.__enter__()
         logger.info("prepared temporary SQLite DB: %s", self.db_path)
@@ -180,13 +187,40 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
         self.temp_dir.cleanup()
         logger.info("cleaned up temporary SQLite DB")
 
-    async def test_aggregate_torrent_flow(self) -> None:
-        try:
-            await asyncio.wait_for(self.run_mcp_flow(), MCP_TIMEOUT_SECONDS)
-        except TimeoutError:
-            self.fail(f"MCP E2E timed out after {MCP_TIMEOUT_SECONDS:.0f} seconds.")
+    async def test_health_gate_initialization(self) -> None:
+        async with asyncio.timeout(MCP_TIMEOUT_SECONDS):
+            env = self.mcp_env()
+            async with Client(self.mcp_transport(env)) as client:
+                await self.assert_tool_schemas(client)
+                await self.initialize_stores_and_open_gate(client)
 
-    async def run_mcp_flow(self) -> None:
+    async def test_aggregate_torrent_flow(self) -> None:
+        async with asyncio.timeout(MCP_TIMEOUT_SECONDS):
+            env = self.mcp_env()
+            async with Client(self.mcp_transport(env)) as client:
+                await self.initialize_healthy_stores(client)
+                await self.add_test_aggregate(client)
+                await self.assert_summary_resource(client)
+                await self.assert_listing_queries(client)
+                await self.assert_torrent_updates(client)
+
+    async def test_health_gate_drift_recovery(self) -> None:
+        async with asyncio.timeout(MCP_TIMEOUT_SECONDS):
+            env = self.mcp_env()
+            async with Client(self.mcp_transport(env)) as client:
+                await self.initialize_healthy_stores(client)
+                await self.add_test_aggregate(client)
+                await self.assert_health_gate_and_recovery(client, env)
+
+    def mcp_transport(self, env: dict[str, str]) -> StdioTransport:
+        return StdioTransport(
+            command="uv",
+            args=["run", "python", "src/main.py", "mcp"],
+            cwd=str(PROJECT_ROOT),
+            env=env,
+        )
+
+    def mcp_env(self) -> dict[str, str]:
         env = os.environ.copy()
         env.update(
             {
@@ -197,162 +231,284 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
                 "QBIT_PASSWORD": "mock",
                 "BANGUMI_BASE_URL": self.mock_server.base_url,
                 "BANGUMI_TOKEN": "",
-                "SEARCH_LANCEDB_PATH": str(
-                    Path(self.temp_dir.name) / "aggregate_search.lancedb"
-                ),
+                "SEARCH_LANCEDB_PATH": str(self.search_path),
             }
         )
-        transport = StdioTransport(
-            command="uv",
-            args=["run", "python", "src/main.py", "mcp"],
-            cwd=str(PROJECT_ROOT),
-            env=env,
+        return env
+
+    async def assert_tool_schemas(self, client: Client[Any]) -> None:
+        logger.info("test step: MCP context parameters are hidden from tool schemas")
+        for tool in await client.list_tools():
+            properties = tool.inputSchema.get("properties", {})
+            self.assertNotIn("context", properties)
+            self.assertNotIn("_fastmcp_context", properties)
+
+    async def initialize_stores_and_open_gate(self, client: Client[Any]) -> None:
+        logger.info(
+            "test step: health check reports missing stores without creating them"
         )
-        async with Client(transport) as client:
-            logger.info("test step: add aggregate with subject and initial torrents")
-            added = await call_tool(
-                client,
-                "add_aggregate",
-                {
-                    "short_name": SHORT_NAME,
-                    "bangumi_subject_id": SUBJECT_ID,
-                    "torrent_hashes": INITIAL_HASHES,
-                },
-            )
-            added_aggregate = ResponsePayload[Aggregate].model_validate(added).data
-            self.assertEqual(
-                added_aggregate,
+        initial_health_report = await self.call_health_check(client)
+        self.assertFalse(initial_health_report.healthy)
+        self.assertFalse(initial_health_report.checks[0].sqlite_ready)
+        self.assertFalse(initial_health_report.checks[0].lancedb_ready)
+        self.assertFalse(self.db_path.exists())
+        self.assertFalse(self.search_path.exists())
+
+        logger.info("test step: health check rejects uninitialized stores")
+        self.db_path.touch()
+        self.search_path.mkdir()
+        uninitialized_health_report = await self.call_health_check(client)
+        self.assertFalse(uninitialized_health_report.healthy)
+        self.assertFalse(uninitialized_health_report.checks[0].sqlite_ready)
+        self.assertFalse(uninitialized_health_report.checks[0].lancedb_ready)
+        self.assertEqual(self.db_path.stat().st_size, 0)
+        self.assertEqual(list(self.search_path.iterdir()), [])
+
+        logger.info("test step: unhealthy services gate aggregate tools")
+        blocked_add = await client.call_tool_mcp(
+            "add_aggregate",
+            arguments={"short_name": SHORT_NAME},
+        )
+        self.assertTrue(blocked_add.isError)
+        self.assertIn("health checks failed", str(blocked_add.content))
+
+        await self.initialize_healthy_stores(client)
+
+    async def initialize_healthy_stores(self, client: Client[Any]) -> None:
+        logger.info("test step: rebuild initializes empty stores and opens the gate")
+        initialized = await call_tool(client, "rebuild_search_index", {})
+        initialized_result = (
+            TypeAdapter(ResponsePayload[SearchIndexRebuildResult])
+            .validate_python(initialized)
+            .data
+        )
+        self.assertEqual(
+            initialized_result,
+            SearchIndexRebuildResult(indexed_documents=0, force=False),
+        )
+        self.assertTrue((await self.call_health_check(client)).healthy)
+
+    async def add_test_aggregate(self, client: Client[Any]) -> None:
+        logger.info("test step: add aggregate with subject and initial torrents")
+        added = await call_tool(
+            client,
+            "add_aggregate",
+            {
+                "short_name": SHORT_NAME,
+                "bangumi_subject_id": SUBJECT_ID,
+                "torrent_hashes": INITIAL_HASHES,
+            },
+        )
+        added_aggregate = ResponsePayload[Aggregate].model_validate(added).data
+        self.assertEqual(
+            added_aggregate,
+            expected_aggregate(
+                INITIAL_HASHES,
+                added_aggregate.bangumi_subjects[0].last_updated_at,
+            ),
+        )
+
+    async def assert_summary_resource(self, client: Client[Any]) -> None:
+        logger.info("test step: read aggregate collection summary resource")
+        resources = await client.list_resources()
+        self.assertIn(
+            "bonsai://aggregates/", {str(resource.uri) for resource in resources}
+        )
+        summary_contents = await client.read_resource("bonsai://aggregates/")
+        summary_content = summary_contents[0]
+        if not isinstance(summary_content, TextResourceContents):
+            self.fail("Aggregate summary resource did not return text content.")
+        self.assertEqual(json.loads(summary_content.text), {"total": 1})
+
+    async def assert_health_gate_and_recovery(
+        self,
+        client: Client[Any],
+        env: dict[str, str],
+    ) -> None:
+        logger.info("test step: health check passes for synchronized stores")
+        healthy_report = await self.call_health_check(client)
+        self.assertEqual(
+            healthy_report,
+            HealthCheckReport(
+                healthy=True,
+                checks=[
+                    SearchIndexConsistencyCheck(
+                        healthy=True,
+                        aggregate_count=1,
+                        document_count=1,
+                        missing_documents=[],
+                        orphaned_documents=[],
+                        stale_documents=[],
+                        duplicate_documents=[],
+                    )
+                ],
+            ),
+        )
+
+        logger.info("test step: remove search document to simulate index drift")
+        search_config = replace(
+            load_config().search,
+            lancedb_path=self.search_path,
+        )
+        await asyncio.to_thread(
+            LanceDbSearchRepository(search_config).delete_document,
+            SHORT_NAME,
+        )
+        unhealthy_report = await self.call_health_check(client)
+        self.assertFalse(unhealthy_report.healthy)
+        self.assertEqual(
+            unhealthy_report.checks[0].missing_documents,
+            [SHORT_NAME],
+        )
+
+        logger.info("test step: detected index drift closes the tool gate")
+        blocked_list = await client.call_tool_mcp(
+            "list_aggregates",
+            arguments={},
+        )
+        self.assertTrue(blocked_list.isError)
+        self.assertIn("health checks failed", str(blocked_list.content))
+
+        logger.info("test step: unhealthy CLI health check exits with failure")
+        unhealthy_cli_result = await asyncio.to_thread(run_health_cli, env)
+        self.assertEqual(
+            unhealthy_cli_result.returncode,
+            1,
+            unhealthy_cli_result.stdout,
+        )
+        self.assertIn("HealthCheckReport(", unhealthy_cli_result.stdout)
+
+        logger.info("test step: rebuild search index")
+        rebuilt = await call_tool(client, "rebuild_search_index", {})
+        rebuilt_result = (
+            TypeAdapter(ResponsePayload[SearchIndexRebuildResult])
+            .validate_python(rebuilt)
+            .data
+        )
+        self.assertEqual(
+            rebuilt_result,
+            SearchIndexRebuildResult(indexed_documents=1, force=False),
+        )
+        self.assertTrue((await self.call_health_check(client)).healthy)
+
+        logger.info("test step: run CLI health check")
+        cli_result = await asyncio.to_thread(run_health_cli, env)
+        self.assertEqual(cli_result.returncode, 0, cli_result.stdout)
+        self.assertIn("HealthCheckReport(", cli_result.stdout)
+        self.assertIn("name='search_index_consistency'", cli_result.stdout)
+
+    async def assert_listing_queries(self, client: Client[Any]) -> None:
+        logger.info("test step: list aggregate after add")
+        listed = await call_tool(
+            client,
+            "list_aggregates",
+            {"filter_short_name": [SHORT_NAME]},
+        )
+        listed_aggregates = ResponsePayload[list[Aggregate]].model_validate(listed).data
+        self.assertEqual(
+            listed_aggregates,
+            [
                 expected_aggregate(
                     INITIAL_HASHES,
-                    added_aggregate.bangumi_subjects[0].last_updated_at,
-                ),
-            )
+                    listed_aggregates[0].bangumi_subjects[0].last_updated_at,
+                )
+            ],
+        )
 
-            logger.info("test step: read aggregate collection summary resource")
-            resources = await client.list_resources()
-            self.assertIn(
-                "bonsai://aggregates/", {str(resource.uri) for resource in resources}
-            )
-            summary_contents = await client.read_resource("bonsai://aggregates/")
-            summary_content = summary_contents[0]
-            if not isinstance(summary_content, TextResourceContents):
-                self.fail("Aggregate summary resource did not return text content.")
-            self.assertEqual(json.loads(summary_content.text), {"total": 1})
-
-            logger.info("test step: list aggregate after add")
-            listed = await call_tool(
-                client,
-                "list_aggregates",
-                {"filter_short_name": [SHORT_NAME]},
-            )
-            listed_aggregates = (
-                ResponsePayload[list[Aggregate]].model_validate(listed).data
-            )
-            self.assertEqual(
-                listed_aggregates,
-                [
-                    expected_aggregate(
-                        INITIAL_HASHES,
-                        listed_aggregates[0].bangumi_subjects[0].last_updated_at,
-                    )
-                ],
-            )
-
-            logger.info("test step: list all aggregates without filters")
-            listed_all = await call_tool(client, "list_aggregates", {})
-            all_aggregates = (
-                ResponsePayload[list[Aggregate]].model_validate(listed_all).data
-            )
-            self.assertEqual(
-                all_aggregates,
-                [
-                    expected_aggregate(
-                        INITIAL_HASHES,
-                        all_aggregates[0].bangumi_subjects[0].last_updated_at,
-                    )
-                ],
-            )
-
-            logger.info("test step: list aggregate by torrent hash")
-            listed_by_hash = await call_tool(
-                client,
-                "list_aggregates",
-                {"filter_torrent_hashes": [INITIAL_HASHES[0]]},
-            )
-            hash_matches = (
-                ResponsePayload[list[Aggregate]].model_validate(listed_by_hash).data
-            )
-            self.assertEqual(
-                hash_matches,
-                [
-                    expected_aggregate(
-                        INITIAL_HASHES,
-                        hash_matches[0].bangumi_subjects[0].last_updated_at,
-                    )
-                ],
-            )
-
-            logger.info("test step: list aggregate by Bangumi GLOB filters")
-            listed_by_subject = await call_tool(
-                client,
-                "list_aggregates",
-                {
-                    "filter_bangumi_subject_name": ["*Subject"],
-                    "filter_bangumi_subject_cn_name": ["*中文名"],
-                },
-            )
-            subject_matches = (
-                ResponsePayload[list[Aggregate]].model_validate(listed_by_subject).data
-            )
-            self.assertEqual(
-                subject_matches,
-                [
-                    expected_aggregate(
-                        INITIAL_HASHES,
-                        subject_matches[0].bangumi_subjects[0].last_updated_at,
-                    )
-                ],
-            )
-
-            logger.info("test step: add a new torrent")
-            after_add = await call_tool(
-                client,
-                "update_aggregate_torrents",
-                {"short_name": SHORT_NAME, "add_hashes": [ADDED_HASH]},
-            )
-            hashes_after_add = (
-                TypeAdapter(ResponsePayload[list[str]]).validate_python(after_add).data
-            )
-            self.assertEqual(hashes_after_add, [*INITIAL_HASHES, ADDED_HASH])
-            listed_after_add = await self.list_test_aggregate(client)
-            self.assertEqual(
-                listed_after_add,
+        logger.info("test step: list all aggregates without filters")
+        listed_all = await call_tool(client, "list_aggregates", {})
+        all_aggregates = (
+            ResponsePayload[list[Aggregate]].model_validate(listed_all).data
+        )
+        self.assertEqual(
+            all_aggregates,
+            [
                 expected_aggregate(
-                    [*INITIAL_HASHES, ADDED_HASH],
-                    listed_after_add.bangumi_subjects[0].last_updated_at,
-                ),
-            )
+                    INITIAL_HASHES,
+                    all_aggregates[0].bangumi_subjects[0].last_updated_at,
+                )
+            ],
+        )
 
-            logger.info("test step: remove an existing torrent")
-            after_remove = await call_tool(
-                client,
-                "update_aggregate_torrents",
-                {"short_name": SHORT_NAME, "remove_hashes": [INITIAL_HASHES[0]]},
-            )
-            hashes_after_remove = (
-                TypeAdapter(ResponsePayload[list[str]])
-                .validate_python(after_remove)
-                .data
-            )
-            self.assertEqual(hashes_after_remove, [INITIAL_HASHES[1], ADDED_HASH])
-            listed_after_remove = await self.list_test_aggregate(client)
-            self.assertEqual(
-                listed_after_remove,
+        logger.info("test step: list aggregate by torrent hash")
+        listed_by_hash = await call_tool(
+            client,
+            "list_aggregates",
+            {"filter_torrent_hashes": [INITIAL_HASHES[0]]},
+        )
+        hash_matches = (
+            ResponsePayload[list[Aggregate]].model_validate(listed_by_hash).data
+        )
+        self.assertEqual(
+            hash_matches,
+            [
                 expected_aggregate(
-                    [INITIAL_HASHES[1], ADDED_HASH],
-                    listed_after_remove.bangumi_subjects[0].last_updated_at,
-                ),
-            )
+                    INITIAL_HASHES,
+                    hash_matches[0].bangumi_subjects[0].last_updated_at,
+                )
+            ],
+        )
+
+        logger.info("test step: list aggregate by Bangumi GLOB filters")
+        listed_by_subject = await call_tool(
+            client,
+            "list_aggregates",
+            {
+                "filter_bangumi_subject_name": ["*Subject"],
+                "filter_bangumi_subject_cn_name": ["*中文名"],
+            },
+        )
+        subject_matches = (
+            ResponsePayload[list[Aggregate]].model_validate(listed_by_subject).data
+        )
+        self.assertEqual(
+            subject_matches,
+            [
+                expected_aggregate(
+                    INITIAL_HASHES,
+                    subject_matches[0].bangumi_subjects[0].last_updated_at,
+                )
+            ],
+        )
+
+    async def assert_torrent_updates(self, client: Client[Any]) -> None:
+        logger.info("test step: add a new torrent")
+        after_add = await call_tool(
+            client,
+            "update_aggregate_torrents",
+            {"short_name": SHORT_NAME, "add_hashes": [ADDED_HASH]},
+        )
+        hashes_after_add = (
+            TypeAdapter(ResponsePayload[list[str]]).validate_python(after_add).data
+        )
+        self.assertEqual(hashes_after_add, [*INITIAL_HASHES, ADDED_HASH])
+        listed_after_add = await self.list_test_aggregate(client)
+        self.assertEqual(
+            listed_after_add,
+            expected_aggregate(
+                [*INITIAL_HASHES, ADDED_HASH],
+                listed_after_add.bangumi_subjects[0].last_updated_at,
+            ),
+        )
+
+        logger.info("test step: remove an existing torrent")
+        after_remove = await call_tool(
+            client,
+            "update_aggregate_torrents",
+            {"short_name": SHORT_NAME, "remove_hashes": [INITIAL_HASHES[0]]},
+        )
+        hashes_after_remove = (
+            TypeAdapter(ResponsePayload[list[str]]).validate_python(after_remove).data
+        )
+        self.assertEqual(hashes_after_remove, [INITIAL_HASHES[1], ADDED_HASH])
+        listed_after_remove = await self.list_test_aggregate(client)
+        self.assertEqual(
+            listed_after_remove,
+            expected_aggregate(
+                [INITIAL_HASHES[1], ADDED_HASH],
+                listed_after_remove.bangumi_subjects[0].last_updated_at,
+            ),
+        )
 
     async def list_test_aggregate(self, client: Client[Any]) -> Aggregate:
         listed = await call_tool(
@@ -363,6 +519,21 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
         listed_aggregates = ResponsePayload[list[Aggregate]].model_validate(listed).data
         self.assertEqual(len(listed_aggregates), 1)
         return listed_aggregates[0]
+
+    async def call_health_check(self, client: Client[Any]) -> HealthCheckReport:
+        checked = await call_tool(client, "check_health", {})
+        return ResponsePayload[HealthCheckReport].model_validate(checked).data
+
+
+def run_health_cli(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["uv", "run", "python", "src/main.py", "health"],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def expected_aggregate(torrent_hashes: list[str], last_updated_at: str) -> Aggregate:

@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 
-from lib.models.bangumi import BangumiSubject  # noqa: TC001
+from lib.models.bangumi import BangumiSubject
 
 
 class Torrent(BaseModel):

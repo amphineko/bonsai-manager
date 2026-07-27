@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, ClassVar, override
+from typing import ClassVar, override
 
 import click
 from rich.console import Group
@@ -11,12 +11,9 @@ from textual.binding import Binding
 from textual.containers import Container
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
-from config import load_config
+from config import Config, load_config
+from lib.models.aggregates import Aggregate
 from lib.services import AggregateService
-
-if TYPE_CHECKING:
-    from config import Config
-    from lib.models.aggregates import Aggregate
 
 
 def format_bangumi_name_cn(entry: Aggregate) -> str:

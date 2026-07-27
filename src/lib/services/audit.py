@@ -7,12 +7,11 @@ from lib.models.qbittorrent import (
     TorrentMappingLocation,
     TrackedTorrentMapping,
 )
+from lib.qbittorrent import QbittorrentClient
+from lib.sql.repositories import SqliteAggregateRepository
 
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
-
-    from lib.qbittorrent import QbittorrentClient
-    from lib.sql.repositories import SqliteAggregateRepository
 
 
 class AggregateAuditService:
