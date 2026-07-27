@@ -29,7 +29,7 @@ project-includes = ["**/*.py*", "**/*.ipynb"]
 dev = [
     "ruff>=0.16.0",
     "types-requests>=2.33.0.20260712",
-    "types-tqdm>=4.68.0.20260608",
+    "types-tqdm>=4.69.0.20260724",
 ]
 
 [tool.ruff.lint]
