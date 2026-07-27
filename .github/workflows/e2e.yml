@@ -29,6 +29,9 @@ jobs:
           path: ~/.cache/huggingface
           key: ${{ runner.os }}-huggingface-qwen3-embedding-0.6b-v1
 
+      - name: Ensure embedding model is available
+        run: uv run hf download Qwen/Qwen3-Embedding-0.6B
+
       - name: Run MCP E2E tests
         run: uv run python src/main.py scripts mcp-e2e
 
