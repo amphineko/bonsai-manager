@@ -25,6 +25,13 @@ def get_config() -> Config:
     return _config
 
 
+@mcp.resource("bonsai://aggregates/")
+def aggregate_summary() -> dict[str, int]:
+    """Return a summary of the tracked aggregate collection."""
+    manager = IndexedAggregateService.from_config(get_config())
+    return {"total": manager.count_aggregates()}
+
+
 @mcp.tool
 def add_aggregate(
     short_name: str,

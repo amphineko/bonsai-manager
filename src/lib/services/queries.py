@@ -68,6 +68,10 @@ class AggregateQueryService:
                 filter_bangumi_subject_cn_name,
             )
 
+    def count_aggregates(self) -> int:
+        with self.get_repository(write=False) as repo:
+            return repo.count_aggregates()
+
     def get_by_short_names(self, short_names: list[str]) -> list[Aggregate]:
         with self.get_repository(write=False) as repo:
             return repo.get_by_short_names(short_names)

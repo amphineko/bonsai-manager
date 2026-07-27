@@ -227,6 +227,14 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
                 ),
             )
 
+            logger.info("test step: read aggregate collection summary resource")
+            resources = await client.list_resources()
+            self.assertIn(
+                "bonsai://aggregates/", {str(resource.uri) for resource in resources}
+            )
+            summary_contents = await client.read_resource("bonsai://aggregates/")
+            self.assertEqual(json.loads(summary_contents[0].text), {"total": 1})
+
             logger.info("test step: list aggregate after add")
             listed = await call_tool(
                 client,
