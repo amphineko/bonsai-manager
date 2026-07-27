@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from sqlalchemy import (
+    CheckConstraint,
     ForeignKey,
     String,
     Text,
@@ -30,7 +31,12 @@ from sqlalchemy.orm import (
     sessionmaker,
 )
 
-from lib.models.aggregates import Aggregate, Torrent
+from lib.models.aggregates import (
+    UNGROUPED_TORRENT_GROUP,
+    Aggregate,
+    Torrent,
+    ordered_torrent_groups,
+)
 from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot
 
 if TYPE_CHECKING:
@@ -68,7 +74,11 @@ class AggregateRepository(Protocol):
 
     def add(self, aggregate: Aggregate) -> None: ...
 
-    def update_torrents(self, short_name: str, torrents: list[Torrent]) -> None: ...
+    def update_torrents(
+        self,
+        short_name: str,
+        torrents: dict[str, list[Torrent]],
+    ) -> None: ...
 
     def update_bangumi_subjects(
         self,
@@ -143,6 +153,30 @@ class TorrentRow(Base):
     )
 
     aggregate: Mapped[AggregateRow] = relationship(back_populates="torrents")
+    group: Mapped[TorrentGroupRow | None] = relationship(
+        back_populates="torrent",
+        cascade="all, delete-orphan",
+        single_parent=True,
+        uselist=False,
+    )
+
+
+class TorrentGroupRow(Base):
+    __tablename__ = "torrent_groups"
+    __table_args__ = (
+        CheckConstraint(
+            "length(trim(group_name)) > 0 AND lower(group_name) <> 'ungrouped'",
+            name="valid_torrent_group_name",
+        ),
+    )
+
+    torrent_hash: Mapped[str] = mapped_column(
+        ForeignKey("torrents.hash", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    group_name: Mapped[str] = mapped_column(String, nullable=False)
+
+    torrent: Mapped[TorrentRow] = relationship(back_populates="group")
 
 
 @event.listens_for(Engine, "connect")
@@ -389,7 +423,11 @@ class SqliteAggregateRepository:
         session = self.require_session()
         session.add(row_from_aggregate(aggregate, session))
 
-    def update_torrents(self, short_name: str, torrents: list[Torrent]) -> None:
+    def update_torrents(
+        self,
+        short_name: str,
+        torrents: dict[str, list[Torrent]],
+    ) -> None:
         if self.session is None:
             with self.get_repository(write=True) as repo:
                 repo.update_torrents(short_name, torrents)
@@ -400,10 +438,7 @@ class SqliteAggregateRepository:
         session.execute(
             delete(TorrentRow).where(TorrentRow.aggregate_id == aggregate_id)
         )
-        session.add_all(
-            TorrentRow(hash=torrent.hash, aggregate_id=aggregate_id)
-            for torrent in sorted(torrents, key=lambda item: item.hash)
-        )
+        session.add_all(torrent_rows(torrents, aggregate_id=aggregate_id))
 
     def update_bangumi_subjects(
         self,
@@ -438,6 +473,7 @@ class SqliteAggregateRepository:
             return
 
         session = self.require_session()
+        session.execute(delete(TorrentGroupRow))
         session.execute(delete(TorrentRow))
         session.execute(delete(AggregateBangumiSubjectRow))
         session.execute(delete(AggregateRow))
@@ -468,7 +504,7 @@ def aggregate_load_options():
         selectinload(AggregateRow.subject_links).selectinload(
             AggregateBangumiSubjectRow.subject
         ),
-        selectinload(AggregateRow.torrents),
+        selectinload(AggregateRow.torrents).selectinload(TorrentRow.group),
     )
 
 
@@ -502,14 +538,20 @@ def aggregate_from_row(row: AggregateRow) -> Aggregate:
             )
         )
 
+    torrents: dict[str, list[Torrent]] = {}
+    for torrent in sorted(row.torrents, key=lambda item: item.hash):
+        group_name = (
+            torrent.group.group_name
+            if torrent.group is not None
+            else UNGROUPED_TORRENT_GROUP
+        )
+        torrents.setdefault(group_name, []).append(Torrent(hash=torrent.hash))
+
     return Aggregate(
         short_name=row.short_name,
         category=row.category,
         bangumi_subjects=subjects,
-        torrents=[
-            Torrent(hash=torrent.hash)
-            for torrent in sorted(row.torrents, key=lambda item: item.hash)
-        ],
+        torrents=ordered_torrent_groups(torrents),
     )
 
 
@@ -528,11 +570,22 @@ def row_from_aggregate(aggregate: Aggregate, session: Session) -> AggregateRow:
             )
         )
 
-    row.torrents = [
-        TorrentRow(hash=torrent.hash)
-        for torrent in sorted(aggregate.torrents, key=lambda item: item.hash)
-    ]
+    row.torrents = torrent_rows(aggregate.torrents)
     return row
+
+
+def torrent_rows(
+    torrents: dict[str, list[Torrent]],
+    aggregate_id: str | None = None,
+) -> list[TorrentRow]:
+    rows = []
+    for group_name, grouped_torrents in ordered_torrent_groups(torrents).items():
+        for torrent in grouped_torrents:
+            row = TorrentRow(hash=torrent.hash, aggregate_id=aggregate_id)
+            if group_name != UNGROUPED_TORRENT_GROUP:
+                row.group = TorrentGroupRow(group_name=group_name)
+            rows.append(row)
+    return rows
 
 
 def upsert_subject_row(session: Session, subject: BangumiSubject) -> BangumiSubjectRow:

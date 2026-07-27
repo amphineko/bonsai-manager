@@ -67,7 +67,7 @@ def validate(config: Config, path: Path | None) -> None:
         aggregates = repo.list_all()
     validate_aggregates(aggregates)
 
-    torrent_count = sum(len(aggregate.torrents) for aggregate in aggregates)
+    torrent_count = sum(aggregate.torrent_count for aggregate in aggregates)
     subject_count = sum(len(aggregate.bangumi_subjects) for aggregate in aggregates)
     click.echo(
         f"Database valid: {len(aggregates)} aggregates, {torrent_count} torrents, "
@@ -96,7 +96,7 @@ def validate_aggregates(aggregates: list[Aggregate]) -> None:
             raise click.ClickException(f"Duplicate aggregate: {aggregate.short_name}")
         short_names.add(aggregate.short_name)
 
-        for torrent in aggregate.torrents:
+        for torrent in aggregate.iter_torrents():
             existing = torrent_hashes.get(torrent.hash)
             if existing is not None:
                 raise click.ClickException(

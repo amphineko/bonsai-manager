@@ -63,13 +63,15 @@ class AggregateService:
     def update_aggregate_torrents(
         self,
         short_name: str,
+        group: str | None = None,
         add_hashes: list[str] | None = None,
         remove_hashes: list[str] | None = None,
-    ) -> list[str]:
+    ) -> dict[str, list[str]]:
         return self.torrents.update_aggregate_torrents(
-            short_name,
-            add_hashes,
-            remove_hashes,
+            short_name=short_name,
+            group=group,
+            add_hashes=add_hashes,
+            remove_hashes=remove_hashes,
         )
 
     def update_aggregate_bangumi_subjects(

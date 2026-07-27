@@ -92,14 +92,21 @@ def create_mcp_server(config: Config) -> FastMCP[McpLifespanContext]:
     @health_gated
     def update_aggregate_torrents(
         short_name: str,
+        group: str | None = None,
         add_hashes: list[str] | None = None,
         remove_hashes: list[str] | None = None,
-    ) -> ResponsePayload[list[str]]:
-        """Add and/or remove qBittorrent torrent hashes on an existing aggregate."""
+    ) -> ResponsePayload[dict[str, list[str]]]:
+        """Add, move, and/or remove torrent hashes on an aggregate.
+
+        Added hashes are placed in `group`, or in the derived `ungrouped` bucket
+        when omitted. Adding a hash already on this aggregate moves it. Removed
+        hashes are deleted regardless of their current group.
+        """
         torrent_hashes = context.indexed.update_aggregate_torrents(
-            short_name,
-            add_hashes,
-            remove_hashes,
+            short_name=short_name,
+            group=group,
+            add_hashes=add_hashes,
+            remove_hashes=remove_hashes,
         )
         return success(
             f"Updated torrents for '{short_name}'",

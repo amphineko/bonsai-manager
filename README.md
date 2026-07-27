@@ -69,7 +69,7 @@ index without CLI access.
 The MCP server provides tools to:
 
 - add and remove aggregates
-- update Bangumi subjects and torrent hashes
+- update Bangumi subjects and add, move, group, or remove torrent hashes
 - list aggregates using SQLite filters
 - search aggregates semantically
 - audit torrent mappings
@@ -144,5 +144,6 @@ To enable OpenCode to directly interact with Bangumi,
 - [ ] Bangumi integration
   - [ ] Synchronize missing Bangumi collections to local catalog
 - [ ] Torrent management
+  - [x] Group torrent hashes within aggregates
   - [ ] [Prowlarr](https://github.com/Prowlarr/Prowlarr) integration
   - [ ] Torrent location management
