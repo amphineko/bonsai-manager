@@ -7,6 +7,7 @@ import pyarrow as pa
 
 from lib.models.search import (
     AggregateSearchDocument,
+    AggregateSearchDocumentMetadata,
     SearchDocumentMatch,
     SearchQueryCache,
     SearchQueryCacheEntry,
@@ -21,6 +22,8 @@ QUERIES_TABLE = "aggregate_search_queries"
 
 class SearchRepository(Protocol):
     def list_documents(self) -> list[AggregateSearchDocument]: ...
+
+    def list_document_metadata(self) -> list[AggregateSearchDocumentMetadata]: ...
 
     def count_documents(self) -> int: ...
 
@@ -72,6 +75,40 @@ class LanceDbSearchRepository:
             db.open_table(DOCUMENTS_TABLE).count_rows(
                 f"embedding_model = {lance_sql_string(self.config.embedding_model)}"
             )
+        )
+
+    def documents_table_exists(self) -> bool:
+        documents_path = self.config.lancedb_path / f"{DOCUMENTS_TABLE}.lance"
+        manifest_path = self.config.lancedb_path / "__manifest"
+        if not documents_path.is_dir() or not manifest_path.is_dir():
+            return False
+        try:
+            db = lancedb.connect(str(self.config.lancedb_path))
+            if DOCUMENTS_TABLE not in db.list_tables().tables:
+                return False
+            table = db.open_table(DOCUMENTS_TABLE)
+            if not document_schema_is_compatible(table.schema):
+                return False
+            table.count_rows()
+        except OSError, RuntimeError, TypeError, ValueError, pa.ArrowException:
+            # Readiness checks report inaccessible or corrupt stores as unhealthy.
+            return False
+        return True
+
+    def list_document_metadata(self) -> list[AggregateSearchDocumentMetadata]:
+        db = self.connect()
+        if DOCUMENTS_TABLE not in db.list_tables().tables:
+            return []
+        rows = (
+            db.open_table(DOCUMENTS_TABLE)
+            .search()
+            .where(f"embedding_model = {lance_sql_string(self.config.embedding_model)}")
+            .select(["aggregate_short_name", "source_hash", "model_name"])
+            .to_list()
+        )
+        return sorted(
+            [AggregateSearchDocumentMetadata.model_validate(row) for row in rows],
+            key=lambda document: document.aggregate_short_name.lower(),
         )
 
     def replace_documents(self, documents: list[AggregateSearchDocument]) -> None:
@@ -236,6 +273,30 @@ def document_schema(dimension: int) -> pa.Schema:
             pa.field("model_name", pa.string()),
             pa.field("updated_at", pa.string()),
         ]
+    )
+
+
+def document_schema_is_compatible(schema: pa.Schema) -> bool:
+    required_types = {
+        "version": pa.int64(),
+        "embedding_model": pa.string(),
+        "aggregate_short_name": pa.string(),
+        "source_text": pa.string(),
+        "source_hash": pa.string(),
+        "model_name": pa.string(),
+        "updated_at": pa.string(),
+    }
+    if any(
+        name not in schema.names or schema.field(name).type != expected_type
+        for name, expected_type in required_types.items()
+    ):
+        return False
+    if "vector" not in schema.names:
+        return False
+    vector_type = schema.field("vector").type
+    return (
+        pa.types.is_fixed_size_list(vector_type)
+        and vector_type.value_type == pa.float32()
     )
 
 

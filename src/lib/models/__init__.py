@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 from lib.models.aggregates import Aggregate, Database, Torrent
 from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot, BangumiTag
+from lib.models.health import HealthCheckReport, SearchIndexConsistencyCheck
 from lib.models.qbittorrent import (
     QbittorrentTorrent,
     QbittorrentTorrentFile,
@@ -13,6 +14,7 @@ from lib.models.qbittorrent import (
 )
 from lib.models.search import (
     AggregateSearchDocument,
+    AggregateSearchDocumentMetadata,
     AggregateSearchResult,
     AggregateSearchResults,
     SearchDocumentMatch,
@@ -31,16 +33,19 @@ class ResponsePayload[DataT](BaseModel):
 __all__ = [
     "Aggregate",
     "AggregateSearchDocument",
+    "AggregateSearchDocumentMetadata",
     "AggregateSearchResult",
     "AggregateSearchResults",
     "BangumiSubject",
     "BangumiSubjectSnapshot",
     "BangumiTag",
     "Database",
+    "HealthCheckReport",
     "QbittorrentTorrent",
     "QbittorrentTorrentFile",
     "ResponsePayload",
     "SearchDocumentMatch",
+    "SearchIndexConsistencyCheck",
     "SearchIndexRebuildResult",
     "SearchQueryCache",
     "SearchQueryCacheEntry",

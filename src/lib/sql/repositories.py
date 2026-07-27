@@ -14,10 +14,12 @@ from sqlalchemy import (
     delete,
     event,
     func,
+    inspect,
     or_,
     select,
 )
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -180,6 +182,27 @@ class SqliteAggregateRepository:
         if self.engine is None:
             raise RuntimeError("Cannot initialize a session-bound repository.")
         Base.metadata.create_all(self.engine)
+
+    def schema_is_ready(self) -> bool:
+        if self.engine is None:
+            raise RuntimeError("Cannot inspect a session-bound repository.")
+        try:
+            inspector = inspect(self.engine)
+            table_names = set(inspector.get_table_names())
+        except SQLAlchemyError:
+            return False
+        for table_name, table in Base.metadata.tables.items():
+            if table_name not in table_names:
+                return False
+            try:
+                column_names = {
+                    str(column["name"]) for column in inspector.get_columns(table_name)
+                }
+            except SQLAlchemyError:
+                return False
+            if not set(table.columns.keys()).issubset(column_names):
+                return False
+        return True
 
     @contextmanager
     def get_repository(self, *, write: bool) -> Iterator[SqliteAggregateRepository]:

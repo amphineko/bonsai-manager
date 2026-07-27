@@ -5,9 +5,11 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 import tempfile
 import threading
 import unittest
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Self, override
@@ -19,14 +21,16 @@ from fastmcp.client.transports import StdioTransport
 from mcp.types import TextResourceContents
 from pydantic import TypeAdapter
 
-from config import PROJECT_ROOT
+from config import PROJECT_ROOT, load_config
 from lib.models import ResponsePayload
 from lib.models.aggregates import Aggregate, Torrent
 from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot, BangumiTag
+from lib.models.health import HealthCheckReport, SearchIndexConsistencyCheck
 from lib.models.search import SearchIndexRebuildResult
+from lib.search.repositories import LanceDbSearchRepository
 from scripts.sandbox import warn_if_sandboxed
 
-MCP_TIMEOUT_SECONDS = 30.0
+MCP_TIMEOUT_SECONDS = 45.0
 
 SUBJECT_ID = 123456
 SHORT_NAME = "MCP E2E Fixture"
@@ -165,12 +169,14 @@ async def call_tool(
 class McpE2ETest(unittest.IsolatedAsyncioTestCase):
     temp_dir: tempfile.TemporaryDirectory[str]
     db_path: Path
+    search_path: Path
     mock_server: MockHttpServer
 
     @override
     async def asyncSetUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory(prefix="bonsai-mcp-e2e-")
         self.db_path = Path(self.temp_dir.name) / "db.sqlite3"
+        self.search_path = Path(self.temp_dir.name) / "aggregate_search.lancedb"
         self.mock_server = MockHttpServer()
         self.mock_server.__enter__()
         logger.info("prepared temporary SQLite DB: %s", self.db_path)
@@ -198,9 +204,7 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
                 "QBIT_PASSWORD": "mock",
                 "BANGUMI_BASE_URL": self.mock_server.base_url,
                 "BANGUMI_TOKEN": "",
-                "SEARCH_LANCEDB_PATH": str(
-                    Path(self.temp_dir.name) / "aggregate_search.lancedb"
-                ),
+                "SEARCH_LANCEDB_PATH": str(self.search_path),
             }
         )
         transport = StdioTransport(
@@ -210,6 +214,26 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
             env=env,
         )
         async with Client(transport) as client:
+            logger.info(
+                "test step: health check reports missing stores without creating them"
+            )
+            initial_health_report = await self.call_health_check(client)
+            self.assertFalse(initial_health_report.healthy)
+            self.assertFalse(initial_health_report.checks[0].sqlite_ready)
+            self.assertFalse(initial_health_report.checks[0].lancedb_ready)
+            self.assertFalse(self.db_path.exists())
+            self.assertFalse(self.search_path.exists())
+
+            logger.info("test step: health check rejects uninitialized stores")
+            self.db_path.touch()
+            self.search_path.mkdir()
+            uninitialized_health_report = await self.call_health_check(client)
+            self.assertFalse(uninitialized_health_report.healthy)
+            self.assertFalse(uninitialized_health_report.checks[0].sqlite_ready)
+            self.assertFalse(uninitialized_health_report.checks[0].lancedb_ready)
+            self.assertEqual(self.db_path.stat().st_size, 0)
+            self.assertEqual(list(self.search_path.iterdir()), [])
+
             logger.info("test step: add aggregate with subject and initial torrents")
             added = await call_tool(
                 client,
@@ -240,6 +264,50 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
                 self.fail("Aggregate summary resource did not return text content.")
             self.assertEqual(json.loads(summary_content.text), {"total": 1})
 
+            logger.info("test step: health check passes for synchronized stores")
+            healthy_report = await self.call_health_check(client)
+            self.assertEqual(
+                healthy_report,
+                HealthCheckReport(
+                    healthy=True,
+                    checks=[
+                        SearchIndexConsistencyCheck(
+                            healthy=True,
+                            aggregate_count=1,
+                            document_count=1,
+                            missing_documents=[],
+                            orphaned_documents=[],
+                            stale_documents=[],
+                            duplicate_documents=[],
+                        )
+                    ],
+                ),
+            )
+
+            logger.info("test step: remove search document to simulate index drift")
+            search_config = replace(
+                load_config().search,
+                lancedb_path=self.search_path,
+            )
+            await asyncio.to_thread(
+                LanceDbSearchRepository(search_config).delete_document,
+                SHORT_NAME,
+            )
+            unhealthy_report = await self.call_health_check(client)
+            self.assertFalse(unhealthy_report.healthy)
+            self.assertEqual(
+                unhealthy_report.checks[0].missing_documents,
+                [SHORT_NAME],
+            )
+            logger.info("test step: unhealthy CLI health check exits with failure")
+            unhealthy_cli_result = await asyncio.to_thread(run_health_cli, env)
+            self.assertEqual(
+                unhealthy_cli_result.returncode,
+                1,
+                unhealthy_cli_result.stdout,
+            )
+            self.assertIn("HealthCheckReport(", unhealthy_cli_result.stdout)
+
             logger.info("test step: rebuild search index")
             rebuilt = await call_tool(client, "rebuild_search_index", {})
             rebuilt_result = (
@@ -251,6 +319,14 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
                 rebuilt_result,
                 SearchIndexRebuildResult(indexed_documents=1, force=False),
             )
+            rebuilt_health_report = await self.call_health_check(client)
+            self.assertTrue(rebuilt_health_report.healthy)
+
+            logger.info("test step: run CLI health check")
+            cli_result = await asyncio.to_thread(run_health_cli, env)
+            self.assertEqual(cli_result.returncode, 0, cli_result.stdout)
+            self.assertIn("HealthCheckReport(", cli_result.stdout)
+            self.assertIn("name='search_index_consistency'", cli_result.stdout)
 
             logger.info("test step: list aggregate after add")
             listed = await call_tool(
@@ -376,6 +452,21 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
         listed_aggregates = ResponsePayload[list[Aggregate]].model_validate(listed).data
         self.assertEqual(len(listed_aggregates), 1)
         return listed_aggregates[0]
+
+    async def call_health_check(self, client: Client[Any]) -> HealthCheckReport:
+        checked = await call_tool(client, "check_health", {})
+        return ResponsePayload[HealthCheckReport].model_validate(checked).data
+
+
+def run_health_cli(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["uv", "run", "python", "src/main.py", "health"],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def expected_aggregate(torrent_hashes: list[str], last_updated_at: str) -> Aggregate:

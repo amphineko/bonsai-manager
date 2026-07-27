@@ -5,6 +5,7 @@ from fastmcp import FastMCP
 from config import Config, load_config
 from lib.models import ResponsePayload
 from lib.models.aggregates import Aggregate  # noqa: TC001
+from lib.models.health import HealthCheckReport  # noqa: TC001
 from lib.models.qbittorrent import TorrentMappingAudit  # noqa: TC001
 from lib.models.search import AggregateSearchResults, SearchIndexRebuildResult
 from lib.services import IndexedAggregateService
@@ -171,6 +172,19 @@ def rebuild_search_index(
         f"Rebuilt search index with {len(documents)} aggregates",
         SearchIndexRebuildResult(indexed_documents=len(documents), force=force),
     )
+
+
+@mcp.tool
+def check_health() -> ResponsePayload[HealthCheckReport]:
+    """Run all Bonsai Manager health checks.
+
+    The current checks verify that SQLite aggregates and LanceDB search documents
+    are complete and consistent. Use rebuild_search_index to repair a failed
+    search index consistency check.
+    """
+    report = IndexedAggregateService.check_health_from_config(get_config())
+    message = "Health checks passed" if report.healthy else "Health checks failed"
+    return success(message, report)
 
 
 @mcp.tool

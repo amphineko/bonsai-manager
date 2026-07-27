@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import hashlib
+from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 
 from sentence_transformers import SentenceTransformer
 from tqdm.auto import tqdm
 
+from lib.models.health import SearchIndexConsistencyCheck
 from lib.models.search import (
     AggregateSearchDocument,
+    AggregateSearchDocumentMetadata,
     AggregateSearchResult,
     SearchQueryCache,
     SearchQueryCacheEntry,
@@ -55,6 +58,56 @@ class AggregateSearchManager:
 
     def count_documents(self) -> int:
         return self.repository.count_documents()
+
+    def check_consistency(self) -> SearchIndexConsistencyCheck:
+        aggregates = self.aggregates.list_aggregates()
+        documents = self.repository.list_document_metadata()
+        aggregate_hashes = {
+            aggregate.short_name: AggregateSearchDocument.source_hash_from_text(
+                AggregateSearchDocument.source_text_from_aggregate(aggregate)
+            )
+            for aggregate in aggregates
+        }
+        documents_by_short_name = defaultdict[
+            str, list[AggregateSearchDocumentMetadata]
+        ](list)
+        for document in documents:
+            documents_by_short_name[document.aggregate_short_name].append(document)
+
+        aggregate_names = set(aggregate_hashes)
+        document_names = set(documents_by_short_name)
+        missing_documents = aggregate_names - document_names
+        orphaned_documents = document_names - aggregate_names
+        stale_documents = {
+            short_name
+            for short_name in aggregate_names & document_names
+            if any(
+                document.source_hash != aggregate_hashes[short_name]
+                or document.model_name != self.config.embedding_model
+                for document in documents_by_short_name[short_name]
+            )
+        }
+        document_counts = Counter(
+            document.aggregate_short_name for document in documents
+        )
+        duplicate_documents = {
+            short_name for short_name, count in document_counts.items() if count > 1
+        }
+        unhealthy_documents = (
+            missing_documents
+            | orphaned_documents
+            | stale_documents
+            | duplicate_documents
+        )
+        return SearchIndexConsistencyCheck(
+            healthy=not unhealthy_documents,
+            aggregate_count=len(aggregates),
+            document_count=len(documents),
+            missing_documents=sorted(missing_documents, key=str.lower),
+            orphaned_documents=sorted(orphaned_documents, key=str.lower),
+            stale_documents=sorted(stale_documents, key=str.lower),
+            duplicate_documents=sorted(duplicate_documents, key=str.lower),
+        )
 
     def load_query_cache(self) -> SearchQueryCache:
         return self.repository.load_query_cache()

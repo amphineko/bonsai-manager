@@ -55,6 +55,12 @@ class AggregateSearchDocument(BaseModel):
         )
 
 
+class AggregateSearchDocumentMetadata(BaseModel):
+    aggregate_short_name: str
+    source_hash: str
+    model_name: str
+
+
 class SearchDocumentMatch(BaseModel):
     aggregate_short_name: str
     score: float
