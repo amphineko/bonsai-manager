@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
 import lancedb
 import pyarrow as pa
 
+from config import SearchConfig
 from lib.models.search import (
     AggregateSearchDocument,
     AggregateSearchDocumentMetadata,
@@ -12,9 +13,6 @@ from lib.models.search import (
     SearchQueryCache,
     SearchQueryCacheEntry,
 )
-
-if TYPE_CHECKING:
-    from config import SearchConfig
 
 DOCUMENTS_TABLE = "aggregate_search_documents"
 QUERIES_TABLE = "aggregate_search_queries"

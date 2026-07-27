@@ -1,19 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING
 
+from config import Config, SearchConfig
+from lib.models.aggregates import Aggregate, Torrent
 from lib.models.health import HealthCheckReport, SearchIndexConsistencyCheck
+from lib.models.qbittorrent import TorrentMappingAudit
+from lib.models.search import AggregateSearchDocument, AggregateSearchResult
 from lib.search import AggregateSearchManager
 from lib.search.repositories import LanceDbSearchRepository
 from lib.services.aggregates import AggregateService
 from lib.sql.repositories import SqliteAggregateRepository
-
-if TYPE_CHECKING:
-    from config import Config, SearchConfig
-    from lib.models.aggregates import Aggregate, Torrent
-    from lib.models.qbittorrent import TorrentMappingAudit
-    from lib.models.search import AggregateSearchDocument, AggregateSearchResult
 
 
 class IndexedAggregateService:

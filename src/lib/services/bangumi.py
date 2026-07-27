@@ -3,14 +3,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from lib.bangumi import BangumiClient
+from lib.models.aggregates import Aggregate
 from lib.models.bangumi import BangumiSubject
+from lib.sql.repositories import SqliteAggregateRepository
 
 if TYPE_CHECKING:
     from contextlib import AbstractContextManager
-
-    from lib.bangumi import BangumiClient
-    from lib.models.aggregates import Aggregate
-    from lib.sql.repositories import SqliteAggregateRepository
 
 
 class AggregateBangumiService:

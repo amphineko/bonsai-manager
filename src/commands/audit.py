@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import click
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
+from config import Config
 from lib.services import AggregateService
-
-if TYPE_CHECKING:
-    from config import Config
 
 
 @click.command(name="audit")

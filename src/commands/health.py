@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import click
 from rich.pretty import pprint
 
+from config import Config
+from lib.models.health import HealthCheckReport
 from lib.services import IndexedAggregateService
-
-if TYPE_CHECKING:
-    from config import Config
-    from lib.models.health import HealthCheckReport
 
 
 @click.command(name="health")

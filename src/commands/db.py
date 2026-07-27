@@ -2,16 +2,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import click
 from pydantic import TypeAdapter
 
+from config import Config
 from lib.models.aggregates import Aggregate
 from lib.sql import SqliteAggregateRepository
-
-if TYPE_CHECKING:
-    from config import Config
 
 DEFAULT_JSON_DB_PATH = Path("db.json")
 

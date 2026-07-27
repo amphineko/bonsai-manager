@@ -49,7 +49,7 @@ extend-select = [
     "TID",
     "W",
 ]
-ignore = []
+ignore = ["TC001"]
 fixable = ["ALL"]
 unfixable = []
 

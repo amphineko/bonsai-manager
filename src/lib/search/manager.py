@@ -3,11 +3,13 @@ from __future__ import annotations
 import hashlib
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
 from sentence_transformers import SentenceTransformer
 from tqdm.auto import tqdm
 
+from config import SearchConfig
+from lib.models.aggregates import Aggregate
 from lib.models.health import SearchIndexConsistencyCheck
 from lib.models.search import (
     AggregateSearchDocument,
@@ -17,10 +19,6 @@ from lib.models.search import (
     SearchQueryCacheEntry,
 )
 from lib.search.repositories import LanceDbSearchRepository, SearchRepository
-
-if TYPE_CHECKING:
-    from config import SearchConfig
-    from lib.models.aggregates import Aggregate
 
 
 class AggregateProvider(Protocol):

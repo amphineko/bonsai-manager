@@ -2,7 +2,7 @@ import hashlib
 
 from pydantic import BaseModel, Field
 
-from lib.models.aggregates import Aggregate  # noqa: TC001
+from lib.models.aggregates import Aggregate
 
 
 class AggregateSearchDocument(BaseModel):

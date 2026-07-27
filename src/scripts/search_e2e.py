@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, override
+from typing import override
 
 import click
 
@@ -15,11 +15,8 @@ from lib.models.aggregates import Aggregate, Torrent
 from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot, BangumiTag
 from lib.models.search import AggregateSearchDocument
 from lib.search import AggregateSearchManager
-from lib.search.repositories import LanceDbSearchRepository
+from lib.search.repositories import LanceDbSearchRepository, SearchRepository
 from scripts.sandbox import warn_if_sandboxed
-
-if TYPE_CHECKING:
-    from lib.search.repositories import SearchRepository
 
 logger = logging.getLogger(__name__)
 
