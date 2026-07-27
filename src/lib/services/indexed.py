@@ -105,6 +105,9 @@ class IndexedAggregateService:
             filter_bangumi_subject_cn_name,
         )
 
+    def count_aggregates(self) -> int:
+        return self.aggregates.count_aggregates()
+
     def search_aggregates(
         self,
         query: str,

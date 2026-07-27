@@ -13,6 +13,7 @@ from sqlalchemy import (
     create_engine,
     delete,
     event,
+    func,
     or_,
     select,
 )
@@ -44,6 +45,8 @@ class AggregateRepository(Protocol):
     ) -> AbstractContextManager[AggregateRepository]: ...
 
     def list_all(self) -> list[Aggregate]: ...
+
+    def count_aggregates(self) -> int: ...
 
     def get_by_short_name(self, short_name: str) -> Aggregate | None: ...
 
@@ -221,6 +224,14 @@ class SqliteAggregateRepository:
             )
         )
         return [aggregate_from_row(row) for row in rows]
+
+    def count_aggregates(self) -> int:
+        if self.session is None:
+            with self.get_repository(write=False) as repo:
+                return repo.count_aggregates()
+
+        session = self.require_session()
+        return int(session.scalar(select(func.count()).select_from(AggregateRow)) or 0)
 
     def get_by_short_name(self, short_name: str) -> Aggregate | None:
         if self.session is None:

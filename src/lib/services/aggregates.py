@@ -98,6 +98,9 @@ class AggregateService:
             filter_bangumi_subject_cn_name,
         )
 
+    def count_aggregates(self) -> int:
+        return self.queries.count_aggregates()
+
     def get_torrent_display_path(self, torrent: Torrent) -> str:
         return self.queries.get_torrent_display_path(torrent)
 

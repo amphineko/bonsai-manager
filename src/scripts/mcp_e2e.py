@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlsplit
 import click
 from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
+from mcp.types import TextResourceContents
 from pydantic import TypeAdapter
 
 from config import PROJECT_ROOT
@@ -226,6 +227,17 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
                     added_aggregate.bangumi_subjects[0].last_updated_at,
                 ),
             )
+
+            logger.info("test step: read aggregate collection summary resource")
+            resources = await client.list_resources()
+            self.assertIn(
+                "bonsai://aggregates/", {str(resource.uri) for resource in resources}
+            )
+            summary_contents = await client.read_resource("bonsai://aggregates/")
+            summary_content = summary_contents[0]
+            if not isinstance(summary_content, TextResourceContents):
+                self.fail("Aggregate summary resource did not return text content.")
+            self.assertEqual(json.loads(summary_content.text), {"total": 1})
 
             logger.info("test step: list aggregate after add")
             listed = await call_tool(
