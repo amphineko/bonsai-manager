@@ -217,7 +217,7 @@ requires-dist = [
 dev = [
     { name = "ruff", specifier = ">=0.16.0" },
     { name = "types-requests", specifier = ">=2.33.0.20260712" },
-    { name = "types-tqdm", specifier = ">=4.68.0.20260608" },
+    { name = "types-tqdm", specifier = ">=4.69.0.20260724" },
 ]
 
 [[package]]
@@ -2285,14 +2285,14 @@ wheels = [
 
 [[package]]
 name = "types-tqdm"
-version = "4.68.0.20260608"
+version = "4.69.0.20260724"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "types-requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/dc/e0/3facccb1ff69970c73fca7a8028286c233d4c1312c475a65fb3d896f56d9/types_tqdm-4.68.0.20260608.tar.gz", hash = "sha256:e1dfddf8770fbc30ecaf95ae57c286397831235064308f7dfc2b1d6684a76107", size = 18470, upload-time = "2026-06-08T06:26:06.661Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f3/ab/b0ffe829cf8b259cb45f720823ba7218b1f1c2d7dec5677e39e2b945e99f/types_tqdm-4.69.0.20260724.tar.gz", hash = "sha256:6b34e41c24ecdaf479ab998dd2062e7288db098018450fd175eee599305c055e", size = 18583, upload-time = "2026-07-24T05:00:23.842Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/53/e8/61d95bfd49d1609fb8e8c5e06f4a094183411988a6f448873f5de6602499/types_tqdm-4.68.0.20260608-py3-none-any.whl", hash = "sha256:450a6e7e9e9b604928968927c414b32970e40091213c4180e1ed470905b13eff", size = 24858, upload-time = "2026-06-08T06:26:05.741Z" },
+    { url = "https://files.pythonhosted.org/packages/71/16/b52f76ee5b5a1a6b44d855769c3cbba8ed977b015e2639d2258dba0133c8/types_tqdm-4.69.0.20260724-py3-none-any.whl", hash = "sha256:635f82705a2d9cc824113f05d24c38ff91347c114b36ffebe537e6c5eff4673f", size = 24911, upload-time = "2026-07-24T05:00:22.847Z" },
 ]
 
 [[package]]
