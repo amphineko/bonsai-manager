@@ -117,7 +117,7 @@ def search_aggregates(
             Text(aggregate.category),
             Text(aggregate.short_name),
             Text(format_bangumi_names(aggregate)),
-            Text(str(len(aggregate.torrents))),
+            Text(str(aggregate.torrent_count)),
         )
 
     console.print(table)

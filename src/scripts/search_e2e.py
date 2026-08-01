@@ -115,7 +115,7 @@ class BaseSearchE2ETest(unittest.TestCase):
                         ),
                     )
                 ],
-                torrents=[Torrent(hash="a" * 40)],
+                torrents={"ungrouped": [Torrent(hash="a" * 40)]},
             ),
             Aggregate(
                 short_name="Beta",
@@ -132,7 +132,7 @@ class BaseSearchE2ETest(unittest.TestCase):
                         ),
                     )
                 ],
-                torrents=[Torrent(hash="b" * 40)],
+                torrents={"ungrouped": [Torrent(hash="b" * 40)]},
             ),
         ]
 

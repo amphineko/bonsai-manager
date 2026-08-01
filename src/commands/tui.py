@@ -173,7 +173,7 @@ class BonsaiTUI(App[None]):
                 Text(entry.short_name),
                 Text(format_bangumi_name_cn(entry) or "-"),
                 Text(format_bangumi_subject_id(entry)),
-                Text(str(len(entry.torrents))),
+                Text(str(entry.torrent_count)),
             )
 
     def on_input_changed(self, event: Input.Changed) -> None:
@@ -231,11 +231,13 @@ class BonsaiTUI(App[None]):
         renderables.append(Text(""))
 
         renderables.append(Text("Torrents:", style="bold"))
-        for t in entry.torrents:
-            display_path = self.manager.get_torrent_display_path(t)
-            torrent_line = Text("• ")
-            torrent_line.append(display_path, style="yellow")
-            renderables.append(torrent_line)
+        for group_name, torrents in entry.torrents.items():
+            renderables.append(Text(group_name, style="bold yellow"))
+            for torrent in torrents:
+                display_path = self.manager.get_torrent_display_path(torrent)
+                torrent_line = Text("• ")
+                torrent_line.append(display_path, style="yellow")
+                renderables.append(torrent_line)
             renderables.append(Text(""))
 
         detail_view.update(Group(*renderables))

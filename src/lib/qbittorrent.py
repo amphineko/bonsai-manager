@@ -32,11 +32,22 @@ class QbittorrentClient:
         return TypeAdapter(list[QbittorrentTorrent]).validate_python(resp.json())
 
     def get_torrent_info(self, torrent_hash: str) -> QbittorrentTorrent | None:
+        torrents = self.get_torrents_info([torrent_hash])
+        return torrents[0] if torrents else None
+
+    def get_torrents_info(
+        self,
+        torrent_hashes: list[str],
+    ) -> list[QbittorrentTorrent]:
+        if not torrent_hashes:
+            return []
         info_url = f"{self.base_url}/torrents/info"
-        resp = self.session.get(info_url, params={"hashes": torrent_hash})
+        resp = self.session.get(
+            info_url,
+            params={"hashes": "|".join(torrent_hashes)},
+        )
         resp.raise_for_status()
-        data = TypeAdapter(list[QbittorrentTorrent]).validate_python(resp.json())
-        return data[0] if data else None
+        return TypeAdapter(list[QbittorrentTorrent]).validate_python(resp.json())
 
     def get_torrent_files(self, torrent_hash: str) -> list[QbittorrentTorrentFile]:
         files_url = f"{self.base_url}/torrents/files"

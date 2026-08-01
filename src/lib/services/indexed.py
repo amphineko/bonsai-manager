@@ -5,7 +5,7 @@ from dataclasses import replace
 from config import Config, SearchConfig
 from lib.models.aggregates import Aggregate, Torrent
 from lib.models.health import HealthCheckReport, SearchIndexConsistencyCheck
-from lib.models.qbittorrent import TorrentMappingAudit
+from lib.models.qbittorrent import QbittorrentTorrent, TorrentMappingAudit
 from lib.models.search import AggregateSearchDocument, AggregateSearchResult
 from lib.search import AggregateSearchManager
 from lib.search.repositories import LanceDbSearchRepository
@@ -127,13 +127,15 @@ class IndexedAggregateService:
     def update_aggregate_torrents(
         self,
         short_name: str,
+        group: str | None = None,
         add_hashes: list[str] | None = None,
         remove_hashes: list[str] | None = None,
-    ) -> list[str]:
+    ) -> dict[str, list[str]]:
         return self.aggregates.update_aggregate_torrents(
-            short_name,
-            add_hashes,
-            remove_hashes,
+            short_name=short_name,
+            group=group,
+            add_hashes=add_hashes,
+            remove_hashes=remove_hashes,
         )
 
     def update_aggregate_bangumi_subjects(
@@ -193,6 +195,12 @@ class IndexedAggregateService:
 
     def get_torrent_display_path(self, torrent: Torrent) -> str:
         return self.aggregates.get_torrent_display_path(torrent)
+
+    def get_torrent_info(
+        self,
+        torrent_hashes: list[str],
+    ) -> list[QbittorrentTorrent]:
+        return self.aggregates.get_torrent_info(torrent_hashes)
 
     def audit_torrent_mapping(
         self,

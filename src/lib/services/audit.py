@@ -45,7 +45,7 @@ class AggregateAuditService:
         qbit_by_hash = {torrent.hash: torrent for torrent in qbit_torrents}
         hash_locations = {}
         for entry in entries:
-            for torrent in entry.torrents:
+            for torrent in entry.iter_torrents():
                 hash_locations.setdefault(torrent.hash, []).append(entry.short_name)
 
         tracked_found: list[TrackedTorrentMapping] = []

@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -12,23 +13,27 @@ import unittest
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Self, override
+from typing import TYPE_CHECKING, Any, ClassVar, Self, override
 from urllib.parse import parse_qs, urlsplit
 
 import click
 from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
 from mcp.types import TextResourceContents
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from config import PROJECT_ROOT, load_config
 from lib.models import ResponsePayload
 from lib.models.aggregates import Aggregate, Torrent
 from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot, BangumiTag
 from lib.models.health import HealthCheckReport, SearchIndexConsistencyCheck
+from lib.models.qbittorrent import QbittorrentTorrent
 from lib.models.search import SearchIndexRebuildResult
 from lib.search.repositories import LanceDbSearchRepository
 from scripts.sandbox import warn_if_sandboxed
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 MCP_TIMEOUT_SECONDS = 45.0
 
@@ -39,17 +44,33 @@ INITIAL_HASHES = [
     "2222222222222222222222222222222222222222",
 ]
 ADDED_HASH = "3333333333333333333333333333333333333333"
+EMPTY_SHORT_NAME = "Empty Aggregate"
+MIXED_SHORT_NAME = "Mixed Groups"
+GROUPED_SHORT_NAME = "Grouped Torrents"
+MIXED_HASHES = [str(number) * 40 for number in range(4, 8)]
+GROUPED_HASHES = [str(number) * 40 for number in range(8, 10)]
+DIRECT_GROUP_HASH = "a" * 40
+DIRECT_UNGROUPED_HASH = "b" * 40
 
 TORRENTS = {
     INITIAL_HASHES[0]: "Fixture Episode 01",
     INITIAL_HASHES[1]: "Fixture Episode 02",
     ADDED_HASH: "Fixture Episode 03",
+    **{
+        torrent_hash: f"Grouped Fixture {index:02d}"
+        for index, torrent_hash in enumerate(
+            [*MIXED_HASHES, *GROUPED_HASHES, DIRECT_GROUP_HASH, DIRECT_UNGROUPED_HASH],
+            start=4,
+        )
+    },
 }
 
 logger = logging.getLogger(__name__)
 
 
 class MockHandler(BaseHTTPRequestHandler):
+    torrent_info_requests: ClassVar[list[list[str]]] = []
+
     def do_POST(self) -> None:
         logger.info("mock request: POST %s", self.path)
         match self.path:
@@ -78,6 +99,7 @@ class MockHandler(BaseHTTPRequestHandler):
                 params = parse_qs(parsed.query)
                 hashes = params.get("hashes", [])
                 torrent_hashes = hashes[0].split("|") if hashes else list(TORRENTS)
+                self.torrent_info_requests.append(torrent_hashes)
                 logger.info("mock qBittorrent torrent info: %s", torrent_hashes)
                 self.send_json(
                     [
@@ -87,7 +109,7 @@ class MockHandler(BaseHTTPRequestHandler):
                             "category": "anime",
                             "save_path": "/downloads",
                         }
-                        for torrent_hash in torrent_hashes
+                        for torrent_hash in reversed(torrent_hashes)
                         if torrent_hash in TORRENTS
                     ]
                 )
@@ -125,6 +147,7 @@ class MockHandler(BaseHTTPRequestHandler):
 
 class MockHttpServer:
     def __init__(self) -> None:
+        MockHandler.torrent_info_requests.clear()
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), MockHandler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
 
@@ -139,6 +162,10 @@ class MockHttpServer:
     @property
     def base_url(self) -> str:
         return f"{self.host}:{self.port}"
+
+    @property
+    def torrent_info_requests(self) -> list[list[str]]:
+        return list(MockHandler.torrent_info_requests)
 
     def __enter__(self) -> Self:
         logger.info("starting mock HTTP server: %s", self.base_url)
@@ -200,9 +227,21 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
             async with Client(self.mcp_transport(env)) as client:
                 await self.initialize_healthy_stores(client)
                 await self.add_test_aggregate(client)
+                self.assert_integer_aggregate_schema()
                 await self.assert_summary_resource(client)
                 await self.assert_listing_queries(client)
+                await self.assert_torrent_info_lookup(client)
                 await self.assert_torrent_updates(client)
+
+    async def test_torrent_group_flow(self) -> None:
+        async with asyncio.timeout(MCP_TIMEOUT_SECONDS):
+            env = self.mcp_env()
+            async with Client(self.mcp_transport(env)) as client:
+                await self.initialize_healthy_stores(client)
+                await self.assert_torrent_group_states(client)
+                await self.assert_torrent_group_updates(client)
+                await self.assert_torrent_group_validation(client)
+                await self.assert_torrent_group_cascade(client)
 
     async def test_health_gate_drift_recovery(self) -> None:
         async with asyncio.timeout(MCP_TIMEOUT_SECONDS):
@@ -235,6 +274,39 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
             }
         )
         return env
+
+    def assert_integer_aggregate_schema(self) -> None:
+        logger.info("test step: aggregate relationships use integer IDs")
+        with sqlite3.connect(self.db_path) as connection:
+            aggregate_id = connection.execute(
+                "SELECT typeof(id), id FROM aggregates WHERE short_name = ?",
+                (SHORT_NAME,),
+            ).fetchone()
+            reference_types = connection.execute(
+                """
+                SELECT
+                    (SELECT typeof(aggregate_id) FROM torrents LIMIT 1),
+                    (SELECT typeof(aggregate_id)
+                     FROM aggregate_bangumi_subjects LIMIT 1)
+                """
+            ).fetchone()
+            declared_types = {
+                table: next(
+                    row[2]
+                    for row in connection.execute(f"PRAGMA table_info({table})")
+                    if row[1] == "aggregate_id"
+                )
+                for table in ("torrents", "aggregate_bangumi_subjects")
+            }
+            foreign_key_errors = list(connection.execute("PRAGMA foreign_key_check"))
+
+        self.assertEqual(aggregate_id, ("integer", 1))
+        self.assertEqual(reference_types, ("integer", "integer"))
+        self.assertEqual(
+            declared_types,
+            {"torrents": "INTEGER", "aggregate_bangumi_subjects": "INTEGER"},
+        )
+        self.assertEqual(foreign_key_errors, [])
 
     async def assert_tool_schemas(self, client: Client[Any]) -> None:
         logger.info("test step: MCP context parameters are hidden from tool schemas")
@@ -479,9 +551,12 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
             {"short_name": SHORT_NAME, "add_hashes": [ADDED_HASH]},
         )
         hashes_after_add = (
-            TypeAdapter(ResponsePayload[list[str]]).validate_python(after_add).data
+            ResponsePayload[dict[str, list[str]]].model_validate(after_add).data
         )
-        self.assertEqual(hashes_after_add, [*INITIAL_HASHES, ADDED_HASH])
+        self.assertEqual(
+            hashes_after_add,
+            {"ungrouped": [*INITIAL_HASHES, ADDED_HASH]},
+        )
         listed_after_add = await self.list_test_aggregate(client)
         self.assertEqual(
             listed_after_add,
@@ -498,9 +573,12 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
             {"short_name": SHORT_NAME, "remove_hashes": [INITIAL_HASHES[0]]},
         )
         hashes_after_remove = (
-            TypeAdapter(ResponsePayload[list[str]]).validate_python(after_remove).data
+            ResponsePayload[dict[str, list[str]]].model_validate(after_remove).data
         )
-        self.assertEqual(hashes_after_remove, [INITIAL_HASHES[1], ADDED_HASH])
+        self.assertEqual(
+            hashes_after_remove,
+            {"ungrouped": [INITIAL_HASHES[1], ADDED_HASH]},
+        )
         listed_after_remove = await self.list_test_aggregate(client)
         self.assertEqual(
             listed_after_remove,
@@ -509,6 +587,386 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
                 listed_after_remove.bangumi_subjects[0].last_updated_at,
             ),
         )
+
+    async def assert_torrent_info_lookup(self, client: Client[Any]) -> None:
+        logger.info("test step: resolve torrent hashes to live qBittorrent metadata")
+        missing_hash = "f" * 40
+        requested_hashes = [INITIAL_HASHES[1], missing_hash, INITIAL_HASHES[0]]
+        resolved = await call_tool(
+            client,
+            "get_torrent_info",
+            {"hashes": requested_hashes},
+        )
+        torrents = (
+            ResponsePayload[list[QbittorrentTorrent]].model_validate(resolved).data
+        )
+        self.assertEqual(
+            torrents,
+            [
+                expected_qbittorrent_torrent(INITIAL_HASHES[1]),
+                expected_qbittorrent_torrent(INITIAL_HASHES[0]),
+            ],
+        )
+        self.assertEqual(
+            self.mock_server.torrent_info_requests[-1],
+            requested_hashes,
+        )
+
+        request_count = len(self.mock_server.torrent_info_requests)
+        empty = await call_tool(client, "get_torrent_info", {"hashes": []})
+        self.assertEqual(
+            ResponsePayload[list[QbittorrentTorrent]].model_validate(empty).data,
+            [],
+        )
+        self.assertEqual(len(self.mock_server.torrent_info_requests), request_count)
+
+        await self.assert_tool_error(
+            client,
+            "get_torrent_info",
+            {"hashes": [DIRECT_GROUP_HASH, DIRECT_GROUP_HASH.upper()]},
+            "duplicates",
+        )
+        self.assertEqual(len(self.mock_server.torrent_info_requests), request_count)
+
+    async def assert_torrent_group_states(self, client: Client[Any]) -> None:
+        logger.info("test step: create empty, ungrouped, mixed, and grouped aggregates")
+        normalized = Aggregate(
+            short_name="Normalized Groups",
+            torrents={
+                "Z": torrent_models(reversed(INITIAL_HASHES)),
+                "empty": [],
+                " Group A ": torrent_models([ADDED_HASH]),
+                "ungrouped": torrent_models([DIRECT_GROUP_HASH]),
+            },
+        )
+        self.assertEqual(
+            list(normalized.torrents),
+            ["ungrouped", "Group A", "Z"],
+        )
+        self.assertEqual(
+            normalized.torrent_hashes_by_group()["Z"],
+            INITIAL_HASHES,
+        )
+        self.assertEqual(
+            Aggregate.model_validate(
+                {
+                    "short_name": "Legacy Flat Torrents",
+                    "torrents": [{"hash": INITIAL_HASHES[0]}],
+                }
+            ),
+            simple_aggregate(
+                "Legacy Flat Torrents",
+                {"ungrouped": torrent_models([INITIAL_HASHES[0]])},
+            ),
+        )
+        invalid_torrent_groups = [
+            {"   ": torrent_models([INITIAL_HASHES[0]])},
+            {"UnGrOuPeD": torrent_models([INITIAL_HASHES[0]])},
+            {
+                "Group A": torrent_models([INITIAL_HASHES[0]]),
+                "Group B": torrent_models([INITIAL_HASHES[0]]),
+            },
+        ]
+        for torrents in invalid_torrent_groups:
+            with (
+                self.subTest(torrents=torrents),
+                self.assertRaises(ValidationError),
+            ):
+                TypeAdapter(list[Aggregate]).validate_python(
+                    [{"short_name": "Invalid Import", "torrents": torrents}]
+                )
+
+        await self.add_simple_aggregate(client, EMPTY_SHORT_NAME, [])
+        await self.add_test_aggregate(client)
+        await self.add_simple_aggregate(client, MIXED_SHORT_NAME, MIXED_HASHES)
+        await self.add_simple_aggregate(client, GROUPED_SHORT_NAME, GROUPED_HASHES)
+
+        documents_before = await self.search_documents()
+        qbit_requests_before = self.mock_server.torrent_info_requests
+        await self.update_torrents(
+            client,
+            MIXED_SHORT_NAME,
+            group="Group A",
+            add_hashes=MIXED_HASHES[:2],
+        )
+        await self.update_torrents(
+            client,
+            GROUPED_SHORT_NAME,
+            group="Group A",
+            add_hashes=[GROUPED_HASHES[0]],
+        )
+        await self.update_torrents(
+            client,
+            GROUPED_SHORT_NAME,
+            group="Group B",
+            add_hashes=[GROUPED_HASHES[1]],
+        )
+        self.assertEqual(
+            self.mock_server.torrent_info_requests,
+            qbit_requests_before,
+        )
+        self.assertEqual(await self.search_documents(), documents_before)
+
+        aggregates = await self.list_all_aggregates(client)
+        by_short_name = {aggregate.short_name: aggregate for aggregate in aggregates}
+        last_updated_at = by_short_name[SHORT_NAME].bangumi_subjects[0].last_updated_at
+        self.assertEqual(
+            by_short_name,
+            {
+                EMPTY_SHORT_NAME: simple_aggregate(EMPTY_SHORT_NAME, {}),
+                SHORT_NAME: expected_aggregate(INITIAL_HASHES, last_updated_at),
+                MIXED_SHORT_NAME: simple_aggregate(
+                    MIXED_SHORT_NAME,
+                    {
+                        "ungrouped": torrent_models(MIXED_HASHES[2:]),
+                        "Group A": torrent_models(MIXED_HASHES[:2]),
+                    },
+                ),
+                GROUPED_SHORT_NAME: simple_aggregate(
+                    GROUPED_SHORT_NAME,
+                    {
+                        "Group A": torrent_models([GROUPED_HASHES[0]]),
+                        "Group B": torrent_models([GROUPED_HASHES[1]]),
+                    },
+                ),
+            },
+        )
+
+    async def assert_torrent_group_updates(self, client: Client[Any]) -> None:
+        logger.info("test step: move torrents between named and ungrouped buckets")
+        request_count = len(self.mock_server.torrent_info_requests)
+        await self.update_torrents(
+            client,
+            MIXED_SHORT_NAME,
+            group="Group B",
+            add_hashes=[MIXED_HASHES[0]],
+        )
+        self.assertEqual(len(self.mock_server.torrent_info_requests), request_count)
+        await self.update_torrents(
+            client,
+            MIXED_SHORT_NAME,
+            add_hashes=[MIXED_HASHES[1], DIRECT_UNGROUPED_HASH],
+        )
+        self.assertEqual(
+            self.mock_server.torrent_info_requests[request_count:],
+            [[DIRECT_UNGROUPED_HASH]],
+        )
+        result = await self.update_torrents(
+            client,
+            MIXED_SHORT_NAME,
+            group="Group A",
+            add_hashes=[DIRECT_GROUP_HASH],
+        )
+        expected_hashes: dict[str, list[str]] = {
+            "ungrouped": [
+                MIXED_HASHES[1],
+                *MIXED_HASHES[2:],
+                DIRECT_UNGROUPED_HASH,
+            ],
+            "Group A": [DIRECT_GROUP_HASH],
+            "Group B": [MIXED_HASHES[0]],
+        }
+        self.assertEqual(result, expected_hashes)
+        self.assertEqual(
+            await self.list_aggregate(client, MIXED_SHORT_NAME),
+            simple_aggregate(
+                MIXED_SHORT_NAME,
+                {
+                    group_name: torrent_models(hashes)
+                    for group_name, hashes in expected_hashes.items()
+                },
+            ),
+        )
+
+        logger.info("test step: remove grouped and ungrouped torrents without a group")
+        result = await self.update_torrents(
+            client,
+            MIXED_SHORT_NAME,
+            remove_hashes=[MIXED_HASHES[0], MIXED_HASHES[1]],
+        )
+        expected_after_remove: dict[str, list[str]] = {
+            "ungrouped": [*MIXED_HASHES[2:], DIRECT_UNGROUPED_HASH],
+            "Group A": [DIRECT_GROUP_HASH],
+        }
+        self.assertEqual(result, expected_after_remove)
+        self.assertEqual(
+            await self.list_aggregate(client, MIXED_SHORT_NAME),
+            simple_aggregate(
+                MIXED_SHORT_NAME,
+                {
+                    group_name: torrent_models(hashes)
+                    for group_name, hashes in expected_after_remove.items()
+                },
+            ),
+        )
+
+    async def assert_torrent_group_validation(self, client: Client[Any]) -> None:
+        logger.info(
+            "test step: reject reserved, empty, missing, and cross-aggregate input"
+        )
+        await self.assert_tool_error(
+            client,
+            "update_aggregate_torrents",
+            {
+                "short_name": MIXED_SHORT_NAME,
+                "group": "UnGrOuPeD",
+                "add_hashes": [DIRECT_GROUP_HASH],
+            },
+            "reserved",
+        )
+        await self.assert_tool_error(
+            client,
+            "update_aggregate_torrents",
+            {
+                "short_name": MIXED_SHORT_NAME,
+                "group": "   ",
+                "add_hashes": [DIRECT_GROUP_HASH],
+            },
+            "cannot be empty",
+        )
+        await self.assert_tool_error(
+            client,
+            "update_aggregate_torrents",
+            {
+                "short_name": MIXED_SHORT_NAME,
+                "group": "UnGrOuPeD",
+                "remove_hashes": [MIXED_HASHES[2]],
+            },
+            "reserved",
+        )
+        await self.assert_tool_error(
+            client,
+            "update_aggregate_torrents",
+            {
+                "short_name": MIXED_SHORT_NAME,
+                "add_hashes": [DIRECT_GROUP_HASH, DIRECT_GROUP_HASH],
+            },
+            "add contain duplicates",
+        )
+        await self.assert_tool_error(
+            client,
+            "update_aggregate_torrents",
+            {
+                "short_name": MIXED_SHORT_NAME,
+                "remove_hashes": [MIXED_HASHES[2], MIXED_HASHES[2]],
+            },
+            "remove contain duplicates",
+        )
+        await self.assert_tool_error(
+            client,
+            "update_aggregate_torrents",
+            {
+                "short_name": MIXED_SHORT_NAME,
+                "add_hashes": [MIXED_HASHES[2]],
+                "remove_hashes": [MIXED_HASHES[2]],
+            },
+            "same torrent hash",
+        )
+        await self.assert_tool_error(
+            client,
+            "update_aggregate_torrents",
+            {
+                "short_name": MIXED_SHORT_NAME,
+                "remove_hashes": ["f" * 40],
+            },
+            "not found",
+        )
+        await self.assert_tool_error(
+            client,
+            "update_aggregate_torrents",
+            {
+                "short_name": MIXED_SHORT_NAME,
+                "group": "Group C",
+                "add_hashes": [INITIAL_HASHES[0]],
+            },
+            SHORT_NAME,
+        )
+
+    async def assert_torrent_group_cascade(self, client: Client[Any]) -> None:
+        logger.info("test step: aggregate removal cascades torrent group mappings")
+        await call_tool(
+            client,
+            "remove_aggregate",
+            {"short_name": GROUPED_SHORT_NAME},
+        )
+        with sqlite3.connect(self.db_path) as connection:
+            group_count = connection.execute(
+                "SELECT COUNT(*) FROM torrent_groups WHERE torrent_hash IN (?, ?)",
+                GROUPED_HASHES,
+            ).fetchone()
+        self.assertEqual(group_count, (0,))
+
+    async def add_simple_aggregate(
+        self,
+        client: Client[Any],
+        short_name: str,
+        torrent_hashes: list[str],
+    ) -> None:
+        added = await call_tool(
+            client,
+            "add_aggregate",
+            {"short_name": short_name, "torrent_hashes": torrent_hashes},
+        )
+        aggregate = ResponsePayload[Aggregate].model_validate(added).data
+        expected_torrents: dict[str, list[Torrent]] = {}
+        if torrent_hashes:
+            expected_torrents["ungrouped"] = torrent_models(torrent_hashes)
+        self.assertEqual(
+            aggregate,
+            simple_aggregate(short_name, expected_torrents),
+        )
+
+    async def update_torrents(
+        self,
+        client: Client[Any],
+        short_name: str,
+        *,
+        group: str | None = None,
+        add_hashes: list[str] | None = None,
+        remove_hashes: list[str] | None = None,
+    ) -> dict[str, list[str]]:
+        arguments: dict[str, object] = {"short_name": short_name}
+        if group is not None:
+            arguments["group"] = group
+        if add_hashes is not None:
+            arguments["add_hashes"] = add_hashes
+        if remove_hashes is not None:
+            arguments["remove_hashes"] = remove_hashes
+        updated = await call_tool(
+            client,
+            "update_aggregate_torrents",
+            arguments,
+        )
+        return ResponsePayload[dict[str, list[str]]].model_validate(updated).data
+
+    async def assert_tool_error(
+        self,
+        client: Client[Any],
+        name: str,
+        arguments: dict[str, object],
+        message: str,
+    ) -> None:
+        result = await client.call_tool_mcp(name, arguments=arguments)
+        self.assertTrue(result.isError)
+        self.assertIn(message, str(result.content))
+
+    async def list_all_aggregates(self, client: Client[Any]) -> list[Aggregate]:
+        listed = await call_tool(client, "list_aggregates", {})
+        return ResponsePayload[list[Aggregate]].model_validate(listed).data
+
+    async def list_aggregate(
+        self,
+        client: Client[Any],
+        short_name: str,
+    ) -> Aggregate:
+        listed = await call_tool(
+            client,
+            "list_aggregates",
+            {"filter_short_name": [short_name]},
+        )
+        aggregates = ResponsePayload[list[Aggregate]].model_validate(listed).data
+        self.assertEqual(len(aggregates), 1)
+        return aggregates[0]
 
     async def list_test_aggregate(self, client: Client[Any]) -> Aggregate:
         listed = await call_tool(
@@ -523,6 +981,15 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
     async def call_health_check(self, client: Client[Any]) -> HealthCheckReport:
         checked = await call_tool(client, "check_health", {})
         return ResponsePayload[HealthCheckReport].model_validate(checked).data
+
+    async def search_documents(self):
+        search_config = replace(
+            load_config().search,
+            lancedb_path=self.search_path,
+        )
+        return await asyncio.to_thread(
+            LanceDbSearchRepository(search_config).list_documents
+        )
 
 
 def run_health_cli(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -552,7 +1019,29 @@ def expected_aggregate(torrent_hashes: list[str], last_updated_at: str) -> Aggre
                 ),
             )
         ],
-        torrents=[Torrent(hash=torrent_hash) for torrent_hash in torrent_hashes],
+        torrents={"ungrouped": torrent_models(torrent_hashes)}
+        if torrent_hashes
+        else {},
+    )
+
+
+def simple_aggregate(
+    short_name: str,
+    torrents: dict[str, list[Torrent]],
+) -> Aggregate:
+    return Aggregate(short_name=short_name, category="anime", torrents=torrents)
+
+
+def torrent_models(torrent_hashes: Iterable[str]) -> list[Torrent]:
+    return [Torrent(hash=torrent_hash) for torrent_hash in sorted(torrent_hashes)]
+
+
+def expected_qbittorrent_torrent(torrent_hash: str) -> QbittorrentTorrent:
+    return QbittorrentTorrent(
+        hash=torrent_hash,
+        name=TORRENTS[torrent_hash],
+        category="anime",
+        save_path="/downloads",
     )
 
 

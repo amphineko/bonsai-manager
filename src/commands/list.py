@@ -70,11 +70,13 @@ def list_entries(config: Config, filter_str: str | None) -> None:
     table.add_column("Torrents", style="yellow")
 
     for entry in entries:
-        torrent_paths = [
-            Text(manager.get_torrent_display_path(torrent))
-            for torrent in entry.torrents
-        ]
-        torrents_text = Text("\n").join(torrent_paths)
+        torrent_lines = []
+        for group_name, torrents in entry.torrents.items():
+            torrent_lines.append(Text(group_name, style="bold"))
+            torrent_lines.extend(
+                Text(manager.get_torrent_display_path(torrent)) for torrent in torrents
+            )
+        torrents_text = Text("\n").join(torrent_lines)
 
         table.add_row(
             Text(entry.category),
