@@ -30,6 +30,7 @@ from lib.models.health import HealthCheckReport, SearchIndexConsistencyCheck
 from lib.models.qbittorrent import QbittorrentTorrent
 from lib.models.search import SearchIndexRebuildResult
 from lib.search.repositories import LanceDbSearchRepository
+from lib.sql import SqliteAggregateRepository
 from scripts.sandbox import warn_if_sandboxed
 
 if TYPE_CHECKING:
@@ -246,14 +247,29 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
         async with asyncio.timeout(MCP_TIMEOUT_SECONDS):
             create_pre_torrent_group_schema(self.db_path)
             env = self.mcp_env()
-            async with Client(self.mcp_transport(env)) as client:
-                await self.initialize_healthy_stores(client)
+            migrated = await asyncio.to_thread(run_db_migration, env)
+            self.assertEqual(migrated.returncode, 0, migrated.stdout)
+            self.assertIn("Migrated aggregate IDs", migrated.stdout)
+            self.assertTrue(Path(f"{self.db_path}.pre-integer-ids.bak").is_file())
+
+            repository = SqliteAggregateRepository(self.db_path, create=False)
+            with repository.get_repository(write=False) as repo:
+                aggregates = repo.list_all()
+            repository.close()
+            self.assertEqual(
+                aggregates,
+                [expected_aggregate([INITIAL_HASHES[0]], "2026-07-19T00:00:00")],
+            )
+
             with sqlite3.connect(self.db_path) as connection:
-                table = connection.execute(
-                    "SELECT name FROM sqlite_master "
-                    "WHERE type = 'table' AND name = 'torrent_groups'"
+                aggregate_id = connection.execute(
+                    "SELECT typeof(id), id FROM aggregates"
                 ).fetchone()
-            self.assertEqual(table, ("torrent_groups",))
+                foreign_key_errors = list(
+                    connection.execute("PRAGMA foreign_key_check")
+                )
+            self.assertEqual(aggregate_id, ("integer", 1))
+            self.assertEqual(foreign_key_errors, [])
 
     async def test_health_gate_drift_recovery(self) -> None:
         async with asyncio.timeout(MCP_TIMEOUT_SECONDS):
@@ -982,6 +998,24 @@ def run_health_cli(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def run_db_migration(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "uv",
+            "run",
+            "python",
+            "src/main.py",
+            "db",
+            "migrate-aggregate-ids",
+        ],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def create_pre_torrent_group_schema(path: Path) -> None:
     with sqlite3.connect(path) as connection:
         connection.executescript(
@@ -1014,6 +1048,32 @@ def create_pre_torrent_group_schema(path: Path) -> None:
                     ON DELETE CASCADE
             );
             """
+        )
+        connection.execute(
+            "INSERT INTO aggregates (id, short_name, category) VALUES (?, ?, ?)",
+            ("legacy-aggregate-id", SHORT_NAME, "anime"),
+        )
+        connection.execute(
+            "INSERT INTO bangumi_subjects "
+            "(subject_id, name, name_cn, type, tags_json, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                SUBJECT_ID,
+                "MCP E2E Subject",
+                "MCP E2E 中文名",
+                2,
+                '[{"name": "e2e", "count": 1}]',
+                "2026-07-19T00:00:00",
+            ),
+        )
+        connection.execute(
+            "INSERT INTO aggregate_bangumi_subjects "
+            "(aggregate_id, subject_id) VALUES (?, ?)",
+            ("legacy-aggregate-id", SUBJECT_ID),
+        )
+        connection.execute(
+            "INSERT INTO torrents (hash, aggregate_id) VALUES (?, ?)",
+            (INITIAL_HASHES[0], "legacy-aggregate-id"),
         )
 
 

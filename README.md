@@ -97,6 +97,7 @@ uv run ./src/main.py -- list
 uv run ./src/main.py -- audit
 uv run ./src/main.py -- db validate
 uv run ./src/main.py -- db import-json --input path/to/legacy-db.json
+uv run ./src/main.py -- db migrate-aggregate-ids
 uv run ./src/main.py -- serve
 ```
 

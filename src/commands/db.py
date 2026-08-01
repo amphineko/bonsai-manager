@@ -8,7 +8,7 @@ from pydantic import TypeAdapter
 
 from config import Config
 from lib.models.aggregates import Aggregate
-from lib.sql import SqliteAggregateRepository
+from lib.sql import SqliteAggregateRepository, migrate_aggregate_ids
 
 DEFAULT_JSON_DB_PATH = Path("db.json")
 
@@ -73,6 +73,39 @@ def validate(config: Config, path: Path | None) -> None:
         f"Database valid: {len(aggregates)} aggregates, {torrent_count} torrents, "
         f"{subject_count} Bangumi subjects."
     )
+
+
+@db_commands.command(name="migrate-aggregate-ids")
+@click.option(
+    "--path",
+    "path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="SQLite database path override. Defaults to active DB_PATH.",
+)
+@click.option(
+    "--backup",
+    "backup_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Backup path. Defaults to <database>.pre-integer-ids.bak.",
+)
+@click.pass_obj
+def migrate_ids(
+    config: Config,
+    path: Path | None,
+    backup_path: Path | None,
+) -> None:
+    """Migrate aggregate UUID primary keys to SQLite integer IDs."""
+    selected_path = path or config.database.path
+    require_existing_file(selected_path, "SQLite database")
+    selected_backup_path = backup_path or Path(f"{selected_path}.pre-integer-ids.bak")
+    if migrate_aggregate_ids(selected_path, selected_backup_path):
+        click.echo(
+            f"Migrated aggregate IDs in {selected_path}; backup: {selected_backup_path}"
+        )
+    else:
+        click.echo(f"Aggregate IDs are already integers in {selected_path}")
 
 
 def load_json_aggregates(path: Path) -> list[Aggregate]:

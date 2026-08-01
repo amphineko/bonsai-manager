@@ -22,6 +22,7 @@ db.json
 *.json.deleted
 *.sqlite3
 *.sqlite3-*
+*.sqlite3.*.bak
 
 # Generated search cache
 aggregate_search_index.json

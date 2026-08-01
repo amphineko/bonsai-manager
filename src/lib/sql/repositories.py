@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import uuid
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -98,7 +97,7 @@ class Base(DeclarativeBase):
 class AggregateRow(Base):
     __tablename__ = "aggregates"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
     short_name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     category: Mapped[str] = mapped_column(String, nullable=False)
 
@@ -130,7 +129,7 @@ class BangumiSubjectRow(Base):
 class AggregateBangumiSubjectRow(Base):
     __tablename__ = "aggregate_bangumi_subjects"
 
-    aggregate_id: Mapped[str] = mapped_column(
+    aggregate_id: Mapped[int] = mapped_column(
         ForeignKey("aggregates.id", ondelete="CASCADE"),
         primary_key=True,
     )
@@ -147,7 +146,7 @@ class TorrentRow(Base):
     __tablename__ = "torrents"
 
     hash: Mapped[str] = mapped_column(String, primary_key=True)
-    aggregate_id: Mapped[str] = mapped_column(
+    aggregate_id: Mapped[int] = mapped_column(
         ForeignKey("aggregates.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -240,7 +239,12 @@ class SqliteAggregateRepository:
                 return False
             if not set(table.columns.keys()).issubset(column_names):
                 return False
-        return True
+        aggregate_id_column = next(
+            column
+            for column in inspector.get_columns(AggregateRow.__tablename__)
+            if column["name"] == "id"
+        )
+        return str(aggregate_id_column["type"]).upper() == "INTEGER"
 
     @contextmanager
     def get_repository(self, *, write: bool) -> Generator[SqliteAggregateRepository]:
@@ -508,11 +512,7 @@ def aggregate_load_options():
     )
 
 
-def stable_aggregate_id(short_name: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"bonsai-manager:aggregate:{short_name}"))
-
-
-def aggregate_id_for_short_name(session: Session, short_name: str) -> str:
+def aggregate_id_for_short_name(session: Session, short_name: str) -> int:
     aggregate_id = session.scalar(
         select(AggregateRow.id).where(AggregateRow.short_name == short_name)
     )
@@ -557,7 +557,6 @@ def aggregate_from_row(row: AggregateRow) -> Aggregate:
 
 def row_from_aggregate(aggregate: Aggregate, session: Session) -> AggregateRow:
     row = AggregateRow(
-        id=stable_aggregate_id(aggregate.short_name),
         short_name=aggregate.short_name,
         category=aggregate.category,
     )
@@ -576,7 +575,7 @@ def row_from_aggregate(aggregate: Aggregate, session: Session) -> AggregateRow:
 
 def torrent_rows(
     torrents: dict[str, list[Torrent]],
-    aggregate_id: str | None = None,
+    aggregate_id: int | None = None,
 ) -> list[TorrentRow]:
     rows = []
     for group_name, grouped_torrents in ordered_torrent_groups(torrents).items():
