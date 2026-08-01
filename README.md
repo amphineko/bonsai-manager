@@ -93,6 +93,7 @@ uv run ./src/main.py -- search "query"
 Other maintenance commands:
 
 ```bash
+uv run python -m unittest discover -s src/tests -t src
 uv run ./src/main.py -- list
 uv run ./src/main.py -- audit
 uv run ./src/main.py -- db validate
