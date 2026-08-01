@@ -6,6 +6,7 @@ from commands.health import check_health
 from commands.list import list_entries
 from commands.mcp_server import run_mcp_server
 from commands.search import search_aggregates
+from commands.sync import sync
 from commands.tui import launch_tui
 from commands.web import serve
 from config import load_config
@@ -28,6 +29,7 @@ cli.add_command(run_mcp_server)
 cli.add_command(scripts)
 cli.add_command(search_aggregates)
 cli.add_command(serve)
+cli.add_command(sync)
 
 
 if __name__ == "__main__":

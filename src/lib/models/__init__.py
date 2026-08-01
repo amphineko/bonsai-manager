@@ -22,6 +22,13 @@ from lib.models.search import (
     SearchQueryCache,
     SearchQueryCacheEntry,
 )
+from lib.models.sync import (
+    SearchIndexSyncResult,
+    SyncReport,
+    SyncStepResult,
+    SyncStepStatus,
+    TorrentAuditSyncResult,
+)
 
 
 class ResponsePayload[DataT](BaseModel):
@@ -47,9 +54,14 @@ __all__ = [
     "SearchDocumentMatch",
     "SearchIndexConsistencyCheck",
     "SearchIndexRebuildResult",
+    "SearchIndexSyncResult",
     "SearchQueryCache",
     "SearchQueryCacheEntry",
+    "SyncReport",
+    "SyncStepResult",
+    "SyncStepStatus",
     "Torrent",
+    "TorrentAuditSyncResult",
     "TorrentMappingAudit",
     "TorrentMappingLocation",
     "TrackedTorrentMapping",

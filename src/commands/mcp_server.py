@@ -15,6 +15,8 @@ from lib.models.aggregates import Aggregate
 from lib.models.health import HealthCheckReport
 from lib.models.qbittorrent import QbittorrentTorrent, TorrentMappingAudit
 from lib.models.search import AggregateSearchResults, SearchIndexRebuildResult
+from lib.models.sync import SyncReport
+from lib.sync import create_sync_runner
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
@@ -37,8 +39,7 @@ def create_mcp_server(config: Config) -> FastMCP[McpLifespanContext]:
             if not context.check_health_once().healthy:
                 raise ToolError(
                     "Bonsai Manager health checks failed. Call check_health for "
-                    "details, then call rebuild_search_index to repair the search "
-                    "index before retrying."
+                    "details, then call sync to repair derived state before retrying."
                 )
             return function(*args, **kwargs)
 
@@ -181,8 +182,8 @@ def create_mcp_server(config: Config) -> FastMCP[McpLifespanContext]:
         Use this for fuzzy semantic discovery, vague descriptions, translated title
         fragments, or cross-language title search. For exact torrent hashes or known
         SQLite GLOB patterns, use list_aggregates instead. Requires an initialized
-        search index; call rebuild_search_index first if the index is empty, stale,
-        or incomplete. The optional threshold is a minimum cosine similarity score.
+        search index; call sync first if the index is empty, stale, or incomplete.
+        The optional threshold is a minimum cosine similarity score.
         """
         try:
             results = context.indexed.search_aggregates(
@@ -199,6 +200,32 @@ def create_mcp_server(config: Config) -> FastMCP[McpLifespanContext]:
             "Searched aggregates",
             AggregateSearchResults(results=results),
         )
+
+    @mcp.tool
+    def sync(
+        force: bool = False,
+        audit_qbittorrent: bool = True,
+    ) -> ResponsePayload[SyncReport]:
+        """Repair derived state and audit external torrent mappings.
+
+        This reconciles LanceDB with SQLite, then optionally performs a read-only
+        qBittorrent mapping audit. It never changes aggregate torrent membership.
+        Set force to recompute all aggregate embeddings.
+        """
+        health_before = context.check_health()
+        report = create_sync_runner(
+            context.indexed,
+            force=force,
+            audit_qbittorrent=audit_qbittorrent,
+            health_before=health_before,
+        ).run()
+        context.set_health_report(report.health_after)
+        message = (
+            "Synchronization completed"
+            if report.healthy
+            else "Synchronization completed with errors"
+        )
+        return success(message, report)
 
     @mcp.tool
     def rebuild_search_index(
@@ -225,8 +252,8 @@ def create_mcp_server(config: Config) -> FastMCP[McpLifespanContext]:
         """Run all Bonsai Manager health checks.
 
         The current checks verify that SQLite aggregates and LanceDB search documents
-        are complete and consistent. Use rebuild_search_index to repair a failed
-        search index consistency check.
+        are complete and consistent. Use sync to repair a failed search index
+        consistency check and audit qBittorrent mappings.
         """
         report = context.check_health()
         message = "Health checks passed" if report.healthy else "Health checks failed"

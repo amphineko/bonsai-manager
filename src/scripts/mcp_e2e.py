@@ -27,8 +27,18 @@ from lib.models import ResponsePayload
 from lib.models.aggregates import Aggregate, Torrent
 from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot, BangumiTag
 from lib.models.health import HealthCheckReport, SearchIndexConsistencyCheck
-from lib.models.qbittorrent import QbittorrentTorrent
+from lib.models.qbittorrent import (
+    QbittorrentTorrent,
+    TorrentMappingAudit,
+    TrackedTorrentMapping,
+)
 from lib.models.search import SearchIndexRebuildResult
+from lib.models.sync import (
+    SearchIndexSyncResult,
+    SyncReport,
+    SyncStepStatus,
+    TorrentAuditSyncResult,
+)
 from lib.search.repositories import LanceDbSearchRepository
 from scripts.sandbox import warn_if_sandboxed
 
@@ -344,7 +354,45 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(blocked_add.isError)
         self.assertIn("health checks failed", str(blocked_add.content))
 
-        await self.initialize_healthy_stores(client)
+        logger.info("test step: sync initializes stores and opens the gate")
+        initialized = await call_tool(client, "sync", {})
+        initialized_report = (
+            ResponsePayload[SyncReport].model_validate(initialized).data
+        )
+        expected_health_after = HealthCheckReport(
+            healthy=True,
+            checks=[
+                SearchIndexConsistencyCheck(
+                    healthy=True,
+                    aggregate_count=0,
+                    document_count=0,
+                    missing_documents=[],
+                    orphaned_documents=[],
+                    stale_documents=[],
+                    duplicate_documents=[],
+                )
+            ],
+        )
+        self.assertEqual(
+            initialized_report,
+            SyncReport(
+                healthy=True,
+                health_before=uninitialized_health_report,
+                health_after=expected_health_after,
+                steps=[
+                    SearchIndexSyncResult(
+                        status=SyncStepStatus.COMPLETED,
+                        indexed_documents=0,
+                        force=False,
+                    ),
+                    TorrentAuditSyncResult(
+                        status=SyncStepStatus.COMPLETED,
+                        report=expected_torrent_audit([]),
+                    ),
+                ],
+            ),
+        )
+        self.assertTrue((await self.call_health_check(client)).healthy)
 
     async def initialize_healthy_stores(self, client: Client[Any]) -> None:
         logger.info("test step: rebuild initializes empty stores and opens the gate")
@@ -450,18 +498,49 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("HealthCheckReport(", unhealthy_cli_result.stdout)
 
-        logger.info("test step: rebuild search index")
-        rebuilt = await call_tool(client, "rebuild_search_index", {})
-        rebuilt_result = (
-            TypeAdapter(ResponsePayload[SearchIndexRebuildResult])
-            .validate_python(rebuilt)
-            .data
+        logger.info("test step: sync repairs search index and audits qBittorrent")
+        synced = await call_tool(client, "sync", {})
+        synced_report = ResponsePayload[SyncReport].model_validate(synced).data
+        expected_healthy_report = HealthCheckReport(
+            healthy=True,
+            checks=[
+                SearchIndexConsistencyCheck(
+                    healthy=True,
+                    aggregate_count=1,
+                    document_count=1,
+                    missing_documents=[],
+                    orphaned_documents=[],
+                    stale_documents=[],
+                    duplicate_documents=[],
+                )
+            ],
         )
         self.assertEqual(
-            rebuilt_result,
-            SearchIndexRebuildResult(indexed_documents=1, force=False),
+            synced_report,
+            SyncReport(
+                healthy=True,
+                health_before=unhealthy_report,
+                health_after=expected_healthy_report,
+                steps=[
+                    SearchIndexSyncResult(
+                        status=SyncStepStatus.COMPLETED,
+                        indexed_documents=1,
+                        force=False,
+                    ),
+                    TorrentAuditSyncResult(
+                        status=SyncStepStatus.COMPLETED,
+                        report=expected_torrent_audit(),
+                    ),
+                ],
+            ),
         )
         self.assertTrue((await self.call_health_check(client)).healthy)
+
+        logger.info("test step: run CLI sync through the same orchestration service")
+        sync_cli_result = await asyncio.to_thread(run_sync_cli, env)
+        self.assertEqual(sync_cli_result.returncode, 0, sync_cli_result.stdout)
+        self.assertIn("SyncReport(", sync_cli_result.stdout)
+        self.assertIn("healthy=True", sync_cli_result.stdout)
 
         logger.info("test step: run CLI health check")
         cli_result = await asyncio.to_thread(run_health_cli, env)
@@ -1003,6 +1082,17 @@ def run_health_cli(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def run_sync_cli(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["uv", "run", "python", "src/main.py", "sync"],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def expected_aggregate(torrent_hashes: list[str], last_updated_at: str) -> Aggregate:
     return Aggregate(
         short_name=SHORT_NAME,
@@ -1042,6 +1132,27 @@ def expected_qbittorrent_torrent(torrent_hash: str) -> QbittorrentTorrent:
         name=TORRENTS[torrent_hash],
         category="anime",
         save_path="/downloads",
+    )
+
+
+def expected_torrent_audit(
+    tracked_hashes: list[str] | None = None,
+) -> TorrentMappingAudit:
+    tracked_hashes = INITIAL_HASHES if tracked_hashes is None else tracked_hashes
+    return TorrentMappingAudit(
+        tracked_found=[
+            TrackedTorrentMapping(
+                hash=torrent_hash,
+                aggregates=[SHORT_NAME],
+                torrent=expected_qbittorrent_torrent(torrent_hash),
+            )
+            for torrent_hash in tracked_hashes
+        ],
+        unmapped=[
+            expected_qbittorrent_torrent(torrent_hash)
+            for torrent_hash in reversed(TORRENTS)
+            if torrent_hash not in tracked_hashes
+        ],
     )
 
 

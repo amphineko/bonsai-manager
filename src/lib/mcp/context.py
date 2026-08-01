@@ -29,6 +29,9 @@ class McpContext:
             report = IndexedAggregateService.check_health_from_config(self.config)
         else:
             report = service.check_health()
+        return self.set_health_report(report)
+
+    def set_health_report(self, report: HealthCheckReport) -> HealthCheckReport:
         with self._health_lock:
             self._health_report = report
         return report
