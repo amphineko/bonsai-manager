@@ -3,7 +3,7 @@ from __future__ import annotations
 from config import Config, load_config
 from lib.bangumi import BangumiClient
 from lib.models.aggregates import Aggregate, Torrent
-from lib.models.qbittorrent import TorrentMappingAudit
+from lib.models.qbittorrent import QbittorrentTorrent, TorrentMappingAudit
 from lib.qbittorrent import QbittorrentClient
 from lib.services.audit import AggregateAuditService
 from lib.services.bangumi import AggregateBangumiService
@@ -105,6 +105,12 @@ class AggregateService:
 
     def get_torrent_display_path(self, torrent: Torrent) -> str:
         return self.queries.get_torrent_display_path(torrent)
+
+    def get_torrent_info(
+        self,
+        torrent_hashes: list[str],
+    ) -> list[QbittorrentTorrent]:
+        return self.queries.get_torrent_info(torrent_hashes)
 
     def audit_torrent_mapping(
         self,

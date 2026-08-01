@@ -70,6 +70,7 @@ The MCP server provides tools to:
 
 - add and remove aggregates
 - update Bangumi subjects and add, move, group, or remove torrent hashes
+- resolve torrent hashes to live qBittorrent names and metadata
 - list aggregates using SQLite filters
 - search aggregates semantically
 - audit torrent mappings

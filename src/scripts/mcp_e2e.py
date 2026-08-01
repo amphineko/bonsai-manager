@@ -27,6 +27,7 @@ from lib.models import ResponsePayload
 from lib.models.aggregates import Aggregate, Torrent
 from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot, BangumiTag
 from lib.models.health import HealthCheckReport, SearchIndexConsistencyCheck
+from lib.models.qbittorrent import QbittorrentTorrent
 from lib.models.search import SearchIndexRebuildResult
 from lib.search.repositories import LanceDbSearchRepository
 from scripts.sandbox import warn_if_sandboxed
@@ -108,7 +109,7 @@ class MockHandler(BaseHTTPRequestHandler):
                             "category": "anime",
                             "save_path": "/downloads",
                         }
-                        for torrent_hash in torrent_hashes
+                        for torrent_hash in reversed(torrent_hashes)
                         if torrent_hash in TORRENTS
                     ]
                 )
@@ -228,6 +229,7 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
                 await self.add_test_aggregate(client)
                 await self.assert_summary_resource(client)
                 await self.assert_listing_queries(client)
+                await self.assert_torrent_info_lookup(client)
                 await self.assert_torrent_updates(client)
 
     async def test_torrent_group_flow(self) -> None:
@@ -564,6 +566,46 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
                 listed_after_remove.bangumi_subjects[0].last_updated_at,
             ),
         )
+
+    async def assert_torrent_info_lookup(self, client: Client[Any]) -> None:
+        logger.info("test step: resolve torrent hashes to live qBittorrent metadata")
+        missing_hash = "f" * 40
+        requested_hashes = [INITIAL_HASHES[1], missing_hash, INITIAL_HASHES[0]]
+        resolved = await call_tool(
+            client,
+            "get_torrent_info",
+            {"hashes": requested_hashes},
+        )
+        torrents = (
+            ResponsePayload[list[QbittorrentTorrent]].model_validate(resolved).data
+        )
+        self.assertEqual(
+            torrents,
+            [
+                expected_qbittorrent_torrent(INITIAL_HASHES[1]),
+                expected_qbittorrent_torrent(INITIAL_HASHES[0]),
+            ],
+        )
+        self.assertEqual(
+            self.mock_server.torrent_info_requests[-1],
+            requested_hashes,
+        )
+
+        request_count = len(self.mock_server.torrent_info_requests)
+        empty = await call_tool(client, "get_torrent_info", {"hashes": []})
+        self.assertEqual(
+            ResponsePayload[list[QbittorrentTorrent]].model_validate(empty).data,
+            [],
+        )
+        self.assertEqual(len(self.mock_server.torrent_info_requests), request_count)
+
+        await self.assert_tool_error(
+            client,
+            "get_torrent_info",
+            {"hashes": [DIRECT_GROUP_HASH, DIRECT_GROUP_HASH.upper()]},
+            "duplicates",
+        )
+        self.assertEqual(len(self.mock_server.torrent_info_requests), request_count)
 
     async def assert_torrent_group_states(self, client: Client[Any]) -> None:
         logger.info("test step: create empty, ungrouped, mixed, and grouped aggregates")
@@ -1006,6 +1048,15 @@ def simple_aggregate(
 
 def torrent_models(torrent_hashes: Iterable[str]) -> list[Torrent]:
     return [Torrent(hash=torrent_hash) for torrent_hash in sorted(torrent_hashes)]
+
+
+def expected_qbittorrent_torrent(torrent_hash: str) -> QbittorrentTorrent:
+    return QbittorrentTorrent(
+        hash=torrent_hash,
+        name=TORRENTS[torrent_hash],
+        category="anime",
+        save_path="/downloads",
+    )
 
 
 @click.command("mcp-e2e")

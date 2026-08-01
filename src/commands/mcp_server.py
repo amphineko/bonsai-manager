@@ -13,7 +13,7 @@ from lib.mcp import McpContext
 from lib.models import ResponsePayload
 from lib.models.aggregates import Aggregate
 from lib.models.health import HealthCheckReport
-from lib.models.qbittorrent import TorrentMappingAudit
+from lib.models.qbittorrent import QbittorrentTorrent, TorrentMappingAudit
 from lib.models.search import AggregateSearchResults, SearchIndexRebuildResult
 
 if TYPE_CHECKING:
@@ -156,6 +156,18 @@ def create_mcp_server(config: Config) -> FastMCP[McpLifespanContext]:
             "Listed aggregates",
             aggregates,
         )
+
+    @mcp.tool
+    def get_torrent_info(
+        hashes: list[str],
+    ) -> ResponsePayload[list[QbittorrentTorrent]]:
+        """Resolve torrent hashes to live qBittorrent metadata in request order.
+
+        Hashes absent from qBittorrent are omitted. Duplicate hashes are rejected.
+        Use list_aggregates first to discover the hashes attached to an aggregate.
+        """
+        torrents = context.indexed.get_torrent_info(hashes)
+        return success("Resolved torrent metadata", torrents)
 
     @mcp.tool
     @health_gated

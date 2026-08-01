@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from lib.models.aggregates import Aggregate, Torrent
+from lib.models.qbittorrent import QbittorrentTorrent
 from lib.qbittorrent import QbittorrentClient
 from lib.sql.repositories import SqliteAggregateRepository
 
@@ -83,6 +84,25 @@ class AggregateQueryService:
             return torrent.hash
         files = self.qbit.get_torrent_files(torrent.hash)
         return get_torrent_display_path(info.save_path, [file.name for file in files])
+
+    def get_torrent_info(
+        self,
+        torrent_hashes: list[str],
+    ) -> list[QbittorrentTorrent]:
+        normalized_hashes = [torrent_hash.casefold() for torrent_hash in torrent_hashes]
+        if len(set(normalized_hashes)) != len(normalized_hashes):
+            raise ValueError("Torrent hashes contain duplicates.")
+        if not torrent_hashes:
+            return []
+
+        self.qbit.login()
+        torrents = self.qbit.get_torrents_info(torrent_hashes)
+        torrents_by_hash = {torrent.hash.casefold(): torrent for torrent in torrents}
+        return [
+            torrents_by_hash[torrent_hash]
+            for torrent_hash in normalized_hashes
+            if torrent_hash in torrents_by_hash
+        ]
 
     def remove_aggregate(self, short_name: str) -> Aggregate:
         with self.get_repository(write=True) as repo:
