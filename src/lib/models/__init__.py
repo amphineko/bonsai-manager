@@ -3,14 +3,18 @@ from typing import Literal
 from pydantic import BaseModel
 
 from lib.models.aggregates import Aggregate, Database, Torrent
+from lib.models.audit import (
+    AuditCheckResult,
+    AuditCheckStatus,
+    AuditFinding,
+    AuditReport,
+    AuditSeverity,
+)
 from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot, BangumiTag
 from lib.models.health import HealthCheckReport, SearchIndexConsistencyCheck
 from lib.models.qbittorrent import (
     QbittorrentTorrent,
     QbittorrentTorrentFile,
-    TorrentMappingAudit,
-    TorrentMappingLocation,
-    TrackedTorrentMapping,
 )
 from lib.models.search import (
     AggregateSearchDocument,
@@ -23,16 +27,16 @@ from lib.models.search import (
     SearchQueryCacheEntry,
 )
 from lib.models.sync import (
+    AuditSyncResult,
     SearchIndexSyncResult,
     SyncReport,
     SyncStepResult,
     SyncStepStatus,
-    TorrentAuditSyncResult,
 )
 
 
 class ResponsePayload[DataT](BaseModel):
-    status: Literal["success"] = "success"
+    status: Literal["success", "error"] = "success"
     message: str
     data: DataT
 
@@ -43,6 +47,12 @@ __all__ = [
     "AggregateSearchDocumentMetadata",
     "AggregateSearchResult",
     "AggregateSearchResults",
+    "AuditCheckResult",
+    "AuditCheckStatus",
+    "AuditFinding",
+    "AuditReport",
+    "AuditSeverity",
+    "AuditSyncResult",
     "BangumiSubject",
     "BangumiSubjectSnapshot",
     "BangumiTag",
@@ -61,8 +71,4 @@ __all__ = [
     "SyncStepResult",
     "SyncStepStatus",
     "Torrent",
-    "TorrentAuditSyncResult",
-    "TorrentMappingAudit",
-    "TorrentMappingLocation",
-    "TrackedTorrentMapping",
 ]

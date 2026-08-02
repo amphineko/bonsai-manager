@@ -25,19 +25,22 @@ from pydantic import TypeAdapter, ValidationError
 from config import PROJECT_ROOT, load_config
 from lib.models import ResponsePayload
 from lib.models.aggregates import Aggregate, Torrent
+from lib.models.audit import (
+    AuditCheckResult,
+    AuditCheckStatus,
+    AuditFinding,
+    AuditReport,
+    AuditSeverity,
+)
 from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot, BangumiTag
 from lib.models.health import HealthCheckReport, SearchIndexConsistencyCheck
-from lib.models.qbittorrent import (
-    QbittorrentTorrent,
-    TorrentMappingAudit,
-    TrackedTorrentMapping,
-)
+from lib.models.qbittorrent import QbittorrentTorrent
 from lib.models.search import SearchIndexRebuildResult
 from lib.models.sync import (
+    AuditSyncResult,
     SearchIndexSyncResult,
     SyncReport,
     SyncStepStatus,
-    TorrentAuditSyncResult,
 )
 from lib.search.repositories import LanceDbSearchRepository
 from scripts.sandbox import warn_if_sandboxed
@@ -80,6 +83,7 @@ logger = logging.getLogger(__name__)
 
 class MockHandler(BaseHTTPRequestHandler):
     torrent_info_requests: ClassVar[list[list[str]]] = []
+    fail_torrent_info_requests: ClassVar[bool] = False
 
     def do_POST(self) -> None:
         logger.info("mock request: POST %s", self.path)
@@ -106,6 +110,10 @@ class MockHandler(BaseHTTPRequestHandler):
                     }
                 )
             case "/api/v2/torrents/info":
+                if self.fail_torrent_info_requests:
+                    logger.info("mock qBittorrent torrent info failure")
+                    self.send_error(503)
+                    return
                 params = parse_qs(parsed.query)
                 hashes = params.get("hashes", [])
                 torrent_hashes = hashes[0].split("|") if hashes else list(TORRENTS)
@@ -158,6 +166,7 @@ class MockHandler(BaseHTTPRequestHandler):
 class MockHttpServer:
     def __init__(self) -> None:
         MockHandler.torrent_info_requests.clear()
+        MockHandler.fail_torrent_info_requests = False
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), MockHandler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
 
@@ -176,6 +185,9 @@ class MockHttpServer:
     @property
     def torrent_info_requests(self) -> list[list[str]]:
         return list(MockHandler.torrent_info_requests)
+
+    def set_torrent_info_failure(self, enabled: bool) -> None:
+        MockHandler.fail_torrent_info_requests = enabled
 
     def __enter__(self) -> Self:
         logger.info("starting mock HTTP server: %s", self.base_url)
@@ -385,9 +397,9 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
                         indexed_documents=0,
                         force=False,
                     ),
-                    TorrentAuditSyncResult(
+                    AuditSyncResult(
                         status=SyncStepStatus.COMPLETED,
-                        report=expected_torrent_audit([]),
+                        report=expected_audit_report([]),
                     ),
                 ],
             ),
@@ -527,14 +539,44 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
                         indexed_documents=1,
                         force=False,
                     ),
-                    TorrentAuditSyncResult(
+                    AuditSyncResult(
                         status=SyncStepStatus.COMPLETED,
-                        report=expected_torrent_audit(),
+                        report=expected_audit_report(),
                     ),
                 ],
             ),
         )
         self.assertTrue((await self.call_health_check(client)).healthy)
+
+        logger.info("test step: generic MCP audit returns the configured checks")
+        audited = await call_tool(client, "audit", {})
+        self.assertEqual(
+            ResponsePayload[AuditReport].model_validate(audited).data,
+            expected_audit_report(),
+        )
+
+        logger.info("test step: CLI audit uses the same configured runner")
+        audit_cli_result = await asyncio.to_thread(run_audit_cli, env)
+        self.assertEqual(
+            audit_cli_result.returncode,
+            0,
+            audit_cli_result.stdout,
+        )
+        self.assertIn("AuditReport(", audit_cli_result.stdout)
+        self.assertIn("torrent.tracked_found", audit_cli_result.stdout)
+
+        logger.info("test step: failed MCP audit returns an error payload with report")
+        self.mock_server.set_torrent_info_failure(True)
+        failed_audit_raw = await call_tool(client, "audit", {})
+        self.mock_server.set_torrent_info_failure(False)
+        failed_audit = ResponsePayload[AuditReport].model_validate(failed_audit_raw)
+        self.assertEqual(failed_audit.status, "error")
+        self.assertFalse(failed_audit.data.successful)
+        self.assertEqual(
+            failed_audit.data.checks[0].status,
+            AuditCheckStatus.FAILED,
+        )
+        self.assertIn("HTTPError", failed_audit.data.checks[0].error or "")
 
         logger.info("test step: run CLI sync through the same orchestration service")
         sync_cli_result = await asyncio.to_thread(run_sync_cli, env)
@@ -1093,6 +1135,17 @@ def run_sync_cli(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def run_audit_cli(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["uv", "run", "python", "src/main.py", "audit"],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def expected_aggregate(torrent_hashes: list[str], last_updated_at: str) -> Aggregate:
     return Aggregate(
         short_name=SHORT_NAME,
@@ -1135,24 +1188,61 @@ def expected_qbittorrent_torrent(torrent_hash: str) -> QbittorrentTorrent:
     )
 
 
-def expected_torrent_audit(
+def expected_audit_report(
     tracked_hashes: list[str] | None = None,
-) -> TorrentMappingAudit:
+) -> AuditReport:
     tracked_hashes = INITIAL_HASHES if tracked_hashes is None else tracked_hashes
-    return TorrentMappingAudit(
-        tracked_found=[
-            TrackedTorrentMapping(
-                hash=torrent_hash,
-                aggregates=[SHORT_NAME],
-                torrent=expected_qbittorrent_torrent(torrent_hash),
+    findings = [
+        expected_tracked_finding(torrent_hash) for torrent_hash in tracked_hashes
+    ]
+    findings.extend(
+        expected_unmapped_finding(torrent_hash)
+        for torrent_hash in reversed(TORRENTS)
+        if torrent_hash not in tracked_hashes
+    )
+    return AuditReport(
+        successful=True,
+        checks=[
+            AuditCheckResult(
+                auditor="torrent_mapping",
+                status=AuditCheckStatus.COMPLETED,
+                findings=findings,
             )
-            for torrent_hash in tracked_hashes
         ],
-        unmapped=[
-            expected_qbittorrent_torrent(torrent_hash)
-            for torrent_hash in reversed(TORRENTS)
-            if torrent_hash not in tracked_hashes
-        ],
+    )
+
+
+def expected_tracked_finding(torrent_hash: str) -> AuditFinding:
+    torrent = expected_qbittorrent_torrent(torrent_hash)
+    return AuditFinding(
+        auditor="torrent_mapping",
+        code="torrent.tracked_found",
+        severity=AuditSeverity.INFO,
+        message="Tracked torrent is present in qBittorrent.",
+        aggregate_short_name=SHORT_NAME,
+        torrent_hash=torrent_hash,
+        path=torrent.save_path,
+        metadata={
+            "aggregates": [SHORT_NAME],
+            "torrent_name": torrent.name,
+            "category": torrent.category,
+        },
+    )
+
+
+def expected_unmapped_finding(torrent_hash: str) -> AuditFinding:
+    torrent = expected_qbittorrent_torrent(torrent_hash)
+    return AuditFinding(
+        auditor="torrent_mapping",
+        code="torrent.unmapped",
+        severity=AuditSeverity.WARNING,
+        message="qBittorrent torrent is not mapped to an aggregate.",
+        torrent_hash=torrent_hash,
+        path=torrent.save_path,
+        metadata={
+            "torrent_name": torrent.name,
+            "category": torrent.category,
+        },
     )
 
 

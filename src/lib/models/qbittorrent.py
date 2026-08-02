@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class QbittorrentTorrent(BaseModel):
@@ -14,19 +14,3 @@ class QbittorrentTorrentFile(BaseModel):
     progress: float = 0
     priority: int = 0
     is_seed: bool = False
-
-
-class TorrentMappingLocation(BaseModel):
-    hash: str
-    aggregates: list[str]
-
-
-class TrackedTorrentMapping(TorrentMappingLocation):
-    torrent: QbittorrentTorrent
-
-
-class TorrentMappingAudit(BaseModel):
-    tracked_found: list[TrackedTorrentMapping] = Field(default_factory=list)
-    tracked_missing: list[TorrentMappingLocation] = Field(default_factory=list)
-    unmapped: list[QbittorrentTorrent] = Field(default_factory=list)
-    duplicates: list[TorrentMappingLocation] = Field(default_factory=list)

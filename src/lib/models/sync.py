@@ -3,8 +3,8 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, Field, model_validator
 
+from lib.models.audit import AuditReport
 from lib.models.health import HealthCheckReport
-from lib.models.qbittorrent import TorrentMappingAudit
 
 
 class SyncStepStatus(StrEnum):
@@ -41,19 +41,20 @@ class SearchIndexSyncResult(BaseModel):
         return self
 
 
-class TorrentAuditSyncResult(BaseModel):
+class AuditSyncResult(BaseModel):
     step: Literal["audit"] = "audit"
     status: SyncStepStatus
-    report: TorrentMappingAudit | None = None
+    report: AuditReport | None = None
     errors: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_status(self) -> Self:
         match self.status:
             case SyncStepStatus.COMPLETED:
-                if self.report is None or self.errors:
+                if self.report is None or not self.report.successful or self.errors:
                     raise ValueError(
-                        "A completed audit step requires a report and no errors."
+                        "A completed audit step requires a successful report and no "
+                        "errors."
                     )
             case SyncStepStatus.SKIPPED:
                 if self.report is not None or self.errors:
@@ -61,15 +62,15 @@ class TorrentAuditSyncResult(BaseModel):
                         "A skipped audit step cannot have output or errors."
                     )
             case SyncStepStatus.FAILED:
-                if self.report is not None or not self.errors:
+                if self.report is None or self.report.successful or not self.errors:
                     raise ValueError(
-                        "A failed audit step requires errors and no report."
+                        "A failed audit step requires a failed report and errors."
                     )
         return self
 
 
 type SyncStepResult = Annotated[
-    SearchIndexSyncResult | TorrentAuditSyncResult,
+    SearchIndexSyncResult | AuditSyncResult,
     Field(discriminator="step"),
 ]
 

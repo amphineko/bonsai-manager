@@ -10,6 +10,6 @@ from lib.sync.protocols import SyncRuntime
 class SyncContext:
     runtime: SyncRuntime
     force: bool = False
-    audit_qbittorrent: bool = True
+    audit_enabled: bool = True
     show_progress: bool = False
     health_before: HealthCheckReport | None = None

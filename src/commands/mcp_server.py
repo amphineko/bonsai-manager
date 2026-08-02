@@ -12,8 +12,9 @@ from config import Config
 from lib.mcp import McpContext
 from lib.models import ResponsePayload
 from lib.models.aggregates import Aggregate
+from lib.models.audit import AuditReport
 from lib.models.health import HealthCheckReport
-from lib.models.qbittorrent import QbittorrentTorrent, TorrentMappingAudit
+from lib.models.qbittorrent import QbittorrentTorrent
 from lib.models.search import AggregateSearchResults, SearchIndexRebuildResult
 from lib.models.sync import SyncReport
 from lib.sync import create_sync_runner
@@ -204,19 +205,20 @@ def create_mcp_server(config: Config) -> FastMCP[McpLifespanContext]:
     @mcp.tool
     def sync(
         force: bool = False,
-        audit_qbittorrent: bool = True,
+        audit_enabled: bool = True,
     ) -> ResponsePayload[SyncReport]:
-        """Repair derived state and audit external torrent mappings.
+        """Repair derived state and run configured audit checks.
 
-        This reconciles LanceDB with SQLite, then optionally performs a read-only
-        qBittorrent mapping audit. It never changes aggregate torrent membership.
-        Set force to recompute all aggregate embeddings.
+        This reconciles LanceDB with SQLite, then optionally runs the configured
+        read-only aggregate auditors. It never changes aggregate torrent membership.
+        Set force to recompute all aggregate embeddings, or disable audit checks
+        with audit_enabled.
         """
         health_before = context.check_health()
         report = create_sync_runner(
             context.indexed,
             force=force,
-            audit_qbittorrent=audit_qbittorrent,
+            audit_enabled=audit_enabled,
             health_before=health_before,
         ).run()
         context.set_health_report(report.health_after)
@@ -253,7 +255,7 @@ def create_mcp_server(config: Config) -> FastMCP[McpLifespanContext]:
 
         The current checks verify that SQLite aggregates and LanceDB search documents
         are complete and consistent. Use sync to repair a failed search index
-        consistency check and audit qBittorrent mappings.
+        consistency check and run configured aggregate auditors.
         """
         report = context.check_health()
         message = "Health checks passed" if report.healthy else "Health checks failed"
@@ -261,14 +263,20 @@ def create_mcp_server(config: Config) -> FastMCP[McpLifespanContext]:
 
     @mcp.tool
     @health_gated
-    def audit_torrent_mapping(
+    def audit(
         category: list[str] | None = None,
-    ) -> ResponsePayload[TorrentMappingAudit]:
-        """Audit qBittorrent torrents against stored aggregate mappings."""
+    ) -> ResponsePayload[AuditReport]:
+        """Run configured read-only aggregate audit checks."""
         categories = category or list(context.config.audit_categories)
-        return success(
-            "Audited torrent mapping",
-            context.indexed.audit_torrent_mapping(categories),
+        report = context.indexed.run_audit(categories)
+        return ResponsePayload(
+            status="success" if report.successful else "error",
+            message=(
+                "Aggregate audits completed"
+                if report.successful
+                else "Aggregate audits failed"
+            ),
+            data=report,
         )
 
     return mcp

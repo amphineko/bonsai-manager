@@ -4,8 +4,9 @@ from dataclasses import replace
 
 from config import Config, SearchConfig
 from lib.models.aggregates import Aggregate, Torrent
+from lib.models.audit import AuditReport
 from lib.models.health import HealthCheckReport, SearchIndexConsistencyCheck
-from lib.models.qbittorrent import QbittorrentTorrent, TorrentMappingAudit
+from lib.models.qbittorrent import QbittorrentTorrent
 from lib.models.search import AggregateSearchDocument, AggregateSearchResult
 from lib.search import AggregateSearchManager
 from lib.search.repositories import LanceDbSearchRepository
@@ -202,8 +203,8 @@ class IndexedAggregateService:
     ) -> list[QbittorrentTorrent]:
         return self.aggregates.get_torrent_info(torrent_hashes)
 
-    def audit_torrent_mapping(
+    def run_audit(
         self,
         categories: list[str] | None = None,
-    ) -> TorrentMappingAudit:
-        return self.aggregates.audit_torrent_mapping(categories)
+    ) -> AuditReport:
+        return self.aggregates.run_audit(categories)

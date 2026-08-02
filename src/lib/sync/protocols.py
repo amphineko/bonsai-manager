@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
+from lib.models.audit import AuditReport
 from lib.models.health import HealthCheckReport
-from lib.models.qbittorrent import TorrentMappingAudit
 from lib.models.search import AggregateSearchDocument
 
 if TYPE_CHECKING:
@@ -20,10 +20,10 @@ class SyncRuntime(Protocol):
         show_progress: bool = False,
     ) -> list[AggregateSearchDocument]: ...
 
-    def audit_torrent_mapping(
+    def run_audit(
         self,
         categories: list[str] | None = None,
-    ) -> TorrentMappingAudit: ...
+    ) -> AuditReport: ...
 
 
 class SyncStep(Protocol):

@@ -1,6 +1,6 @@
 import click
 
-from commands.audit import audit_torrent_mapping
+from commands.audit import audit
 from commands.db import db_commands
 from commands.health import check_health
 from commands.list import list_entries
@@ -20,7 +20,7 @@ def cli(ctx: click.Context):
     ctx.obj = load_config()
 
 
-cli.add_command(audit_torrent_mapping)
+cli.add_command(audit)
 cli.add_command(db_commands)
 cli.add_command(check_health)
 cli.add_command(launch_tui)
