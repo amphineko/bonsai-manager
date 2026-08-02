@@ -30,7 +30,7 @@ min-severity = "warn"
 dev = [
     "ruff>=0.16.0",
     "types-requests>=2.33.0.20260712",
-    "types-tqdm>=4.69.0.20260724",
+    "types-tqdm>=4.70.0.20260730",
 ]
 
 [tool.ruff.lint]
