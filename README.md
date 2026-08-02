@@ -58,13 +58,13 @@ Configure as an MCP server, OpenCode as an example:
 On first use, initialize SQLite and the semantic search index:
 
 ```bash
-uv run ./src/main.py -- search --rebuild-index
-uv run ./src/main.py -- health
+uv run ./src/main.py -- sync
 ```
 
 Database-backed MCP tools are gated until health checks pass. MCP clients can use
-`check_health` for details and `rebuild_search_index` to initialize or repair the
-index without CLI access.
+`sync` to initialize or repair the index and audit qBittorrent mappings. The
+specialized `check_health` and `rebuild_search_index` tools remain available for
+diagnostics and targeted repair.
 
 The MCP server provides tools to:
 
@@ -73,8 +73,8 @@ The MCP server provides tools to:
 - resolve torrent hashes to live qBittorrent names and metadata
 - list aggregates using SQLite filters
 - search aggregates semantically
-- audit torrent mappings
-- check health and rebuild the search index
+- synchronize the search index and audit torrent mappings
+- check health and rebuild the search index directly
 
 The `bonsai://aggregates/` resource returns the current aggregate count.
 
@@ -88,6 +88,12 @@ Search semantically:
 
 ```bash
 uv run ./src/main.py -- search "query"
+```
+
+Synchronize the derived search index and audit qBittorrent mappings:
+
+```bash
+uv run ./src/main.py -- sync
 ```
 
 Other maintenance commands:

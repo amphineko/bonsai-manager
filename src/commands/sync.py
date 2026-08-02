@@ -1,0 +1,48 @@
+from __future__ import annotations
+
+import click
+from rich.pretty import pprint
+
+from config import Config
+from lib.models.sync import SyncReport
+from lib.services import IndexedAggregateService
+from lib.sync import create_sync_runner
+
+
+@click.command(name="sync")
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Recompute all aggregate embeddings while synchronizing.",
+)
+@click.option(
+    "--no-audit-qbittorrent",
+    "audit_qbittorrent",
+    flag_value=False,
+    default=True,
+    help="Skip the read-only qBittorrent mapping audit.",
+)
+@click.pass_obj
+def sync(
+    config: Config,
+    force: bool,
+    audit_qbittorrent: bool,
+) -> SyncReport:
+    """Repair derived state and audit external torrent mappings."""
+    health_before = IndexedAggregateService.check_health_from_config(config)
+    indexed = IndexedAggregateService.from_config(config)
+    try:
+        report = create_sync_runner(
+            indexed,
+            force=force,
+            audit_qbittorrent=audit_qbittorrent,
+            show_progress=True,
+            health_before=health_before,
+        ).run()
+    finally:
+        indexed.close()
+
+    pprint(report)
+    if not report.healthy:
+        raise click.exceptions.Exit(1)
+    return report

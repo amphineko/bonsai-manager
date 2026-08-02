@@ -279,7 +279,7 @@ class AggregateSearchManager:
     ) -> list[AggregateSearchResult]:
         if self.repository.count_documents() == 0:
             raise ValueError(
-                "Search index is empty. Run `search --rebuild-index` first."
+                "Search index is empty. Run `sync` or `search --rebuild-index` first."
             )
         query_embedding = self.get_query_embedding(
             query,
