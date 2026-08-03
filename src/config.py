@@ -142,6 +142,7 @@ class DatabaseConfig:
 class Config:
     database: DatabaseConfig
     aggregate_category: str
+    audit_checks: tuple[str, ...]
     audit_categories: tuple[str, ...]
     bangumi: BangumiConfig
     qbittorrent: QbittorrentConfig
@@ -153,6 +154,11 @@ class Config:
         return cls(
             database=DatabaseConfig.from_env(environs),
             aggregate_category=environs.get("AGGREGATE_CATEGORY", "anime"),
+            audit_checks=tuple(
+                check.strip()
+                for check in environs.get("AUDIT_CHECKS", "torrent_mapping").split(",")
+                if check.strip()
+            ),
             audit_categories=tuple(
                 category.strip()
                 for category in environs.get(

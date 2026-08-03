@@ -24,6 +24,8 @@ QBIT_PORT=8080
 QBIT_USERNAME=admin
 QBIT_PASSWORD=adminadmin
 BANGUMI_TOKEN=
+AUDIT_CHECKS=torrent_mapping
+AUDIT_CATEGORIES=anime,RSS,prowlarr
 SEARCH_LANCEDB_PATH=aggregate_search.lancedb
 ```
 
@@ -62,7 +64,7 @@ uv run ./src/main.py -- sync
 ```
 
 Database-backed MCP tools are gated until health checks pass. MCP clients can use
-`sync` to initialize or repair the index and audit qBittorrent mappings. The
+`sync` to initialize or repair the index and run configured audit checks. The
 specialized `check_health` and `rebuild_search_index` tools remain available for
 diagnostics and targeted repair.
 
@@ -73,7 +75,8 @@ The MCP server provides tools to:
 - resolve torrent hashes to live qBittorrent names and metadata
 - list aggregates using SQLite filters
 - search aggregates semantically
-- synchronize the search index and audit torrent mappings
+- run configured aggregate audits
+- synchronize the search index and run configured audit checks
 - check health and rebuild the search index directly
 
 The `bonsai://aggregates/` resource returns the current aggregate count.
@@ -90,7 +93,7 @@ Search semantically:
 uv run ./src/main.py -- search "query"
 ```
 
-Synchronize the derived search index and audit qBittorrent mappings:
+Synchronize the derived search index and run configured audit checks:
 
 ```bash
 uv run ./src/main.py -- sync

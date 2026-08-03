@@ -3,16 +3,19 @@ from __future__ import annotations
 import unittest
 
 from pydantic import ValidationError
-from requests import RequestException
 
+from lib.models.audit import (
+    AuditCheckResult,
+    AuditCheckStatus,
+    AuditReport,
+)
 from lib.models.health import HealthCheckReport, SearchIndexConsistencyCheck
-from lib.models.qbittorrent import TorrentMappingAudit
 from lib.models.search import AggregateSearchDocument
 from lib.models.sync import (
+    AuditSyncResult,
     SearchIndexSyncResult,
     SyncReport,
     SyncStepStatus,
-    TorrentAuditSyncResult,
 )
 from lib.sync import create_sync_runner
 
@@ -23,10 +26,12 @@ class FakeSyncRuntime:
         health_reports: list[HealthCheckReport],
         *,
         rebuild_error: RuntimeError | None = None,
-        audit_error: RequestException | None = None,
+        audit_report: AuditReport | None = None,
+        audit_error: ValueError | None = None,
     ) -> None:
         self.health_reports = health_reports
         self.rebuild_error = rebuild_error
+        self.audit_report = audit_report or successful_audit_report()
         self.audit_error = audit_error
         self.health_calls = 0
         self.rebuild_calls: list[tuple[bool, bool]] = []
@@ -50,15 +55,15 @@ class FakeSyncRuntime:
             raise self.rebuild_error
         return [search_document_fixture()]
 
-    def audit_torrent_mapping(
+    def run_audit(
         self,
         categories: list[str] | None = None,
-    ) -> TorrentMappingAudit:
+    ) -> AuditReport:
         self.events.append("audit")
         self.audit_calls += 1
         if self.audit_error is not None:
             raise self.audit_error
-        return TorrentMappingAudit()
+        return self.audit_report
 
 
 class SyncRunnerTest(unittest.TestCase):
@@ -85,9 +90,9 @@ class SyncRunnerTest(unittest.TestCase):
                         indexed_documents=1,
                         force=True,
                     ),
-                    TorrentAuditSyncResult(
+                    AuditSyncResult(
                         status=SyncStepStatus.COMPLETED,
-                        report=TorrentMappingAudit(),
+                        report=successful_audit_report(),
                     ),
                 ],
             ),
@@ -98,10 +103,11 @@ class SyncRunnerTest(unittest.TestCase):
 
     def test_sync_reports_expected_operational_errors(self) -> None:
         unhealthy = health_report(healthy=False, missing_documents=["Fixture"])
+        failed_audit = failed_audit_report()
         runtime = FakeSyncRuntime(
             [unhealthy, unhealthy],
             rebuild_error=RuntimeError("embedding unavailable"),
-            audit_error=RequestException("qBittorrent unavailable"),
+            audit_report=failed_audit,
         )
 
         report = create_sync_runner(runtime).run()
@@ -118,8 +124,9 @@ class SyncRunnerTest(unittest.TestCase):
                         force=False,
                         errors=["RuntimeError: embedding unavailable"],
                     ),
-                    TorrentAuditSyncResult(
+                    AuditSyncResult(
                         status=SyncStepStatus.FAILED,
+                        report=failed_audit,
                         errors=["RequestException: qBittorrent unavailable"],
                     ),
                 ],
@@ -127,23 +134,42 @@ class SyncRunnerTest(unittest.TestCase):
         )
         self.assertEqual(runtime.events, ["health", "search", "audit", "health"])
 
-    def test_sync_can_skip_qbittorrent_audit_and_reuse_preflight_health(self) -> None:
+    def test_sync_can_skip_audit_and_reuse_preflight_health(self) -> None:
         healthy = health_report(healthy=True)
         runtime = FakeSyncRuntime([healthy])
 
         report = create_sync_runner(
             runtime,
-            audit_qbittorrent=False,
+            audit_enabled=False,
             health_before=healthy,
         ).run()
 
         self.assertTrue(report.healthy)
         self.assertEqual(
             report.steps[1],
-            TorrentAuditSyncResult(status=SyncStepStatus.SKIPPED),
+            AuditSyncResult(status=SyncStepStatus.SKIPPED),
         )
         self.assertEqual(runtime.audit_calls, 0)
         self.assertEqual(runtime.events, ["search", "health"])
+
+    def test_sync_normalizes_audit_setup_errors_and_checks_health_after(self) -> None:
+        healthy = health_report(healthy=True)
+        runtime = FakeSyncRuntime(
+            [healthy, healthy],
+            audit_error=ValueError("Unknown aggregate auditor: typo"),
+        )
+
+        report = create_sync_runner(runtime).run()
+
+        self.assertFalse(report.healthy)
+        audit_result = report.steps[1]
+        self.assertIsInstance(audit_result, AuditSyncResult)
+        self.assertEqual(audit_result.status, SyncStepStatus.FAILED)
+        self.assertEqual(
+            audit_result.errors,
+            ["ValueError: Unknown aggregate auditor: typo"],
+        )
+        self.assertEqual(runtime.events, ["health", "search", "audit", "health"])
 
     def test_step_results_reject_contradictory_states(self) -> None:
         with self.assertRaises(ValidationError):
@@ -153,7 +179,32 @@ class SyncRunnerTest(unittest.TestCase):
                 errors=["unexpected"],
             )
         with self.assertRaises(ValidationError):
-            TorrentAuditSyncResult(status=SyncStepStatus.FAILED)
+            AuditSyncResult(status=SyncStepStatus.FAILED)
+
+
+def successful_audit_report() -> AuditReport:
+    return AuditReport(
+        successful=True,
+        checks=[
+            AuditCheckResult(
+                auditor="fixture",
+                status=AuditCheckStatus.COMPLETED,
+            )
+        ],
+    )
+
+
+def failed_audit_report() -> AuditReport:
+    return AuditReport(
+        successful=False,
+        checks=[
+            AuditCheckResult(
+                auditor="torrent_mapping",
+                status=AuditCheckStatus.FAILED,
+                error="RequestException: qBittorrent unavailable",
+            )
+        ],
+    )
 
 
 def health_report(

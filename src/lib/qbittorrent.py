@@ -14,7 +14,7 @@ class QbittorrentClient:
     def close(self) -> None:
         self.session.close()
 
-    def login(self):
+    def login(self) -> None:
         auth_url = f"{self.base_url}/auth/login"
         resp = self.session.post(
             auth_url,

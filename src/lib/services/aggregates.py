@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from config import Config, load_config
+from lib.audit import create_audit_runner
 from lib.bangumi import BangumiClient
 from lib.models.aggregates import Aggregate, Torrent
-from lib.models.qbittorrent import QbittorrentTorrent, TorrentMappingAudit
+from lib.models.audit import AuditReport
+from lib.models.qbittorrent import QbittorrentTorrent
 from lib.qbittorrent import QbittorrentClient
-from lib.services.audit import AggregateAuditService
 from lib.services.bangumi import AggregateBangumiService
 from lib.services.creation import AggregateCreationService
 from lib.services.queries import AggregateQueryService
@@ -33,11 +34,6 @@ class AggregateService:
             self.torrents,
             self.bangumi,
             self.config.aggregate_category,
-        )
-        self.audit = AggregateAuditService(
-            self.repository,
-            self.qbit,
-            self.config.audit_categories,
         )
 
     def close(self) -> None:
@@ -112,11 +108,16 @@ class AggregateService:
     ) -> list[QbittorrentTorrent]:
         return self.queries.get_torrent_info(torrent_hashes)
 
-    def audit_torrent_mapping(
+    def run_audit(
         self,
         categories: list[str] | None = None,
-    ) -> TorrentMappingAudit:
-        return self.audit.audit_torrent_mapping(categories)
+    ) -> AuditReport:
+        return create_audit_runner(
+            self.repository,
+            self.qbit,
+            categories=tuple(categories or self.config.audit_categories),
+            auditor_names=self.config.audit_checks,
+        ).run()
 
 
 DBManager = AggregateService

@@ -16,26 +16,26 @@ from lib.sync import create_sync_runner
     help="Recompute all aggregate embeddings while synchronizing.",
 )
 @click.option(
-    "--no-audit-qbittorrent",
-    "audit_qbittorrent",
+    "--no-audit",
+    "audit_enabled",
     flag_value=False,
     default=True,
-    help="Skip the read-only qBittorrent mapping audit.",
+    help="Skip configured read-only audit checks.",
 )
 @click.pass_obj
 def sync(
     config: Config,
     force: bool,
-    audit_qbittorrent: bool,
+    audit_enabled: bool,
 ) -> SyncReport:
-    """Repair derived state and audit external torrent mappings."""
+    """Repair derived state and run configured audit checks."""
     health_before = IndexedAggregateService.check_health_from_config(config)
     indexed = IndexedAggregateService.from_config(config)
     try:
         report = create_sync_runner(
             indexed,
             force=force,
-            audit_qbittorrent=audit_qbittorrent,
+            audit_enabled=audit_enabled,
             show_progress=True,
             health_before=health_before,
         ).run()
