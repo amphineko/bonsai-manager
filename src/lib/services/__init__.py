@@ -1,5 +1,6 @@
 from lib.services.aggregates import AggregateService, DBManager
 from lib.services.bangumi import AggregateBangumiService
+from lib.services.bangumi_collections import BangumiCollectionService
 from lib.services.creation import AggregateCreationService
 from lib.services.indexed import IndexedAggregateService
 from lib.services.queries import AggregateQueryService
@@ -11,6 +12,7 @@ __all__ = [
     "AggregateQueryService",
     "AggregateService",
     "AggregateTorrentService",
+    "BangumiCollectionService",
     "DBManager",
     "IndexedAggregateService",
 ]

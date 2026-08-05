@@ -207,12 +207,13 @@ def create_mcp_server(config: Config) -> FastMCP[McpLifespanContext]:
         force: bool = False,
         audit_enabled: bool = True,
     ) -> ResponsePayload[SyncReport]:
-        """Repair derived state and run configured audit checks.
+        """Refresh configured sources, repair derived state, and run audits.
 
-        This reconciles LanceDB with SQLite, then optionally runs the configured
-        read-only aggregate auditors. It never changes aggregate torrent membership.
-        Set force to recompute all aggregate embeddings, or disable audit checks
-        with audit_enabled.
+        This refreshes a configured Bangumi collection mirror when its TTL expires,
+        reconciles LanceDB with SQLite, then optionally runs the configured read-only
+        aggregate auditors. It never changes aggregate torrent membership. Set force
+        to bypass source freshness checks and recompute all aggregate embeddings, or
+        disable audit checks with audit_enabled.
         """
         health_before = context.check_health()
         report = create_sync_runner(

@@ -126,6 +126,29 @@ class BangumiSubjectRow(Base):
     )
 
 
+class BangumiUserCollectionRow(Base):
+    __tablename__ = "bangumi_user_collections"
+
+    username: Mapped[str] = mapped_column(String, primary_key=True)
+    subject_id: Mapped[int] = mapped_column(
+        ForeignKey("bangumi_subjects.subject_id"),
+        primary_key=True,
+    )
+    collection_type: Mapped[int] = mapped_column(nullable=False)
+    remote_updated_at: Mapped[str] = mapped_column(String, nullable=False)
+    first_seen_at: Mapped[str] = mapped_column(String, nullable=False)
+    last_seen_at: Mapped[str] = mapped_column(String, nullable=False)
+    synced_at: Mapped[str] = mapped_column(String, nullable=False)
+    removed_at: Mapped[str | None] = mapped_column(String)
+
+
+class BangumiCollectionSyncStateRow(Base):
+    __tablename__ = "bangumi_collection_sync_states"
+
+    username: Mapped[str] = mapped_column(String, primary_key=True)
+    last_successful_sync_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
 class AggregateBangumiSubjectRow(Base):
     __tablename__ = "aggregate_bangumi_subjects"
 
@@ -481,7 +504,13 @@ class SqliteAggregateRepository:
         session.execute(delete(TorrentRow))
         session.execute(delete(AggregateBangumiSubjectRow))
         session.execute(delete(AggregateRow))
-        session.execute(delete(BangumiSubjectRow))
+        session.execute(
+            delete(BangumiSubjectRow).where(
+                BangumiSubjectRow.subject_id.not_in(
+                    select(BangumiUserCollectionRow.subject_id)
+                )
+            )
+        )
         for aggregate in aggregates:
             session.add(row_from_aggregate(aggregate, session))
 

@@ -13,6 +13,7 @@ from lib.models.health import HealthCheckReport, SearchIndexConsistencyCheck
 from lib.models.search import AggregateSearchDocument
 from lib.models.sync import (
     AuditSyncResult,
+    BangumiCollectionSyncResult,
     SearchIndexSyncResult,
     SyncReport,
     SyncStepStatus,
@@ -28,15 +29,29 @@ class FakeSyncRuntime:
         rebuild_error: RuntimeError | None = None,
         audit_report: AuditReport | None = None,
         audit_error: ValueError | None = None,
+        collection_result: BangumiCollectionSyncResult | None = None,
+        collection_error: ValueError | None = None,
     ) -> None:
         self.health_reports = health_reports
         self.rebuild_error = rebuild_error
         self.audit_report = audit_report or successful_audit_report()
         self.audit_error = audit_error
+        self.collection_result = collection_result or skipped_collection_result()
+        self.collection_error = collection_error
         self.health_calls = 0
         self.rebuild_calls: list[tuple[bool, bool]] = []
         self.audit_calls = 0
         self.events: list[str] = []
+
+    def sync_bangumi_collections(
+        self,
+        *,
+        force: bool = False,
+    ) -> BangumiCollectionSyncResult:
+        self.events.append(f"bangumi:{force}")
+        if self.collection_error is not None:
+            raise self.collection_error
+        return self.collection_result
 
     def check_health(self) -> HealthCheckReport:
         self.events.append("health")
@@ -85,6 +100,7 @@ class SyncRunnerTest(unittest.TestCase):
                 health_before=before,
                 health_after=after,
                 steps=[
+                    skipped_collection_result(),
                     SearchIndexSyncResult(
                         status=SyncStepStatus.COMPLETED,
                         indexed_documents=1,
@@ -99,7 +115,10 @@ class SyncRunnerTest(unittest.TestCase):
         )
         self.assertEqual(runtime.rebuild_calls, [(True, True)])
         self.assertEqual(runtime.audit_calls, 1)
-        self.assertEqual(runtime.events, ["health", "search", "audit", "health"])
+        self.assertEqual(
+            runtime.events,
+            ["health", "bangumi:True", "search", "audit", "health"],
+        )
 
     def test_sync_reports_expected_operational_errors(self) -> None:
         unhealthy = health_report(healthy=False, missing_documents=["Fixture"])
@@ -119,6 +138,7 @@ class SyncRunnerTest(unittest.TestCase):
                 health_before=unhealthy,
                 health_after=unhealthy,
                 steps=[
+                    skipped_collection_result(),
                     SearchIndexSyncResult(
                         status=SyncStepStatus.FAILED,
                         force=False,
@@ -132,7 +152,10 @@ class SyncRunnerTest(unittest.TestCase):
                 ],
             ),
         )
-        self.assertEqual(runtime.events, ["health", "search", "audit", "health"])
+        self.assertEqual(
+            runtime.events,
+            ["health", "bangumi:False", "search", "audit", "health"],
+        )
 
     def test_sync_can_skip_audit_and_reuse_preflight_health(self) -> None:
         healthy = health_report(healthy=True)
@@ -146,11 +169,11 @@ class SyncRunnerTest(unittest.TestCase):
 
         self.assertTrue(report.healthy)
         self.assertEqual(
-            report.steps[1],
+            report.steps[2],
             AuditSyncResult(status=SyncStepStatus.SKIPPED),
         )
         self.assertEqual(runtime.audit_calls, 0)
-        self.assertEqual(runtime.events, ["search", "health"])
+        self.assertEqual(runtime.events, ["bangumi:False", "search", "health"])
 
     def test_sync_normalizes_audit_setup_errors_and_checks_health_after(self) -> None:
         healthy = health_report(healthy=True)
@@ -162,14 +185,17 @@ class SyncRunnerTest(unittest.TestCase):
         report = create_sync_runner(runtime).run()
 
         self.assertFalse(report.healthy)
-        audit_result = report.steps[1]
+        audit_result = report.steps[2]
         self.assertIsInstance(audit_result, AuditSyncResult)
         self.assertEqual(audit_result.status, SyncStepStatus.FAILED)
         self.assertEqual(
             audit_result.errors,
             ["ValueError: Unknown aggregate auditor: typo"],
         )
-        self.assertEqual(runtime.events, ["health", "search", "audit", "health"])
+        self.assertEqual(
+            runtime.events,
+            ["health", "bangumi:False", "search", "audit", "health"],
+        )
 
     def test_step_results_reject_contradictory_states(self) -> None:
         with self.assertRaises(ValidationError):
@@ -181,6 +207,28 @@ class SyncRunnerTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             AuditSyncResult(status=SyncStepStatus.FAILED)
 
+    def test_sync_isolates_bangumi_collection_errors(self) -> None:
+        healthy = health_report(healthy=True)
+        runtime = FakeSyncRuntime(
+            [healthy, healthy],
+            collection_error=ValueError("incomplete page"),
+        )
+
+        report = create_sync_runner(runtime).run()
+
+        self.assertFalse(report.healthy)
+        self.assertEqual(
+            report.steps[0],
+            BangumiCollectionSyncResult(
+                status=SyncStepStatus.FAILED,
+                errors=["ValueError: incomplete page"],
+            ),
+        )
+        self.assertEqual(
+            runtime.events,
+            ["health", "bangumi:False", "search", "audit", "health"],
+        )
+
 
 def successful_audit_report() -> AuditReport:
     return AuditReport(
@@ -191,6 +239,13 @@ def successful_audit_report() -> AuditReport:
                 status=AuditCheckStatus.COMPLETED,
             )
         ],
+    )
+
+
+def skipped_collection_result() -> BangumiCollectionSyncResult:
+    return BangumiCollectionSyncResult(
+        status=SyncStepStatus.SKIPPED,
+        reason="BANGUMI_USERNAME is not configured.",
     )
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -80,13 +81,30 @@ class BangumiConfig:
     base_url: str
     user_agent: str
     token: str | None
+    username: str | None
+    collection_ttl: timedelta
 
     @classmethod
     def from_env(cls, environs: dict[str, str]) -> BangumiConfig:
+        try:
+            collection_ttl_seconds = int(
+                environs.get("BANGUMI_COLLECTION_TTL_SECONDS", "21600")
+            )
+        except ValueError as exc:
+            raise ValueError(
+                "BANGUMI_COLLECTION_TTL_SECONDS must be an integer, got "
+                f"{environs.get('BANGUMI_COLLECTION_TTL_SECONDS')!r}"
+            ) from exc
+        if collection_ttl_seconds < 0:
+            raise ValueError("BANGUMI_COLLECTION_TTL_SECONDS cannot be negative.")
+
+        username = environs.get("BANGUMI_USERNAME", "").strip() or None
         return cls(
             base_url=environs.get("BANGUMI_BASE_URL", "https://api.bgm.tv"),
             user_agent=environs.get("BANGUMI_USER_AGENT", "bonsai-manager/0.1.0"),
             token=environs.get("BANGUMI_TOKEN"),
+            username=username,
+            collection_ttl=timedelta(seconds=collection_ttl_seconds),
         )
 
 

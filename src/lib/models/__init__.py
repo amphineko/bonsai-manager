@@ -10,7 +10,14 @@ from lib.models.audit import (
     AuditReport,
     AuditSeverity,
 )
-from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot, BangumiTag
+from lib.models.bangumi import (
+    BangumiCollectionSyncState,
+    BangumiCollectionType,
+    BangumiSubject,
+    BangumiSubjectSnapshot,
+    BangumiTag,
+    BangumiUserCollection,
+)
 from lib.models.health import HealthCheckReport, SearchIndexConsistencyCheck
 from lib.models.qbittorrent import (
     QbittorrentTorrent,
@@ -28,6 +35,7 @@ from lib.models.search import (
 )
 from lib.models.sync import (
     AuditSyncResult,
+    BangumiCollectionSyncResult,
     SearchIndexSyncResult,
     SyncReport,
     SyncStepResult,
@@ -53,9 +61,13 @@ __all__ = [
     "AuditReport",
     "AuditSeverity",
     "AuditSyncResult",
+    "BangumiCollectionSyncResult",
+    "BangumiCollectionSyncState",
+    "BangumiCollectionType",
     "BangumiSubject",
     "BangumiSubjectSnapshot",
     "BangumiTag",
+    "BangumiUserCollection",
     "Database",
     "HealthCheckReport",
     "QbittorrentTorrent",

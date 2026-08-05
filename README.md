@@ -24,6 +24,8 @@ QBIT_PORT=8080
 QBIT_USERNAME=admin
 QBIT_PASSWORD=adminadmin
 BANGUMI_TOKEN=
+BANGUMI_USERNAME=
+BANGUMI_COLLECTION_TTL_SECONDS=21600
 AUDIT_CHECKS=torrent_mapping
 AUDIT_CATEGORIES=anime,RSS,prowlarr
 SEARCH_LANCEDB_PATH=aggregate_search.lancedb
@@ -64,9 +66,11 @@ uv run ./src/main.py -- sync
 ```
 
 Database-backed MCP tools are gated until health checks pass. MCP clients can use
-`sync` to initialize or repair the index and run configured audit checks. The
-specialized `check_health` and `rebuild_search_index` tools remain available for
-diagnostics and targeted repair.
+`sync` to initialize or repair the index, refresh the configured Bangumi user's
+anime collection mirror after its six-hour default TTL, and run configured audit
+checks. Use `sync --force` to bypass remote freshness checks and recompute all
+embeddings. The specialized `check_health` and `rebuild_search_index` tools remain
+available for diagnostics and targeted repair.
 
 The MCP server provides tools to:
 
@@ -76,7 +80,7 @@ The MCP server provides tools to:
 - list aggregates using SQLite filters
 - search aggregates semantically
 - run configured aggregate audits
-- synchronize the search index and run configured audit checks
+- synchronize the Bangumi collection mirror and search index, then run audits
 - check health and rebuild the search index directly
 
 The `bonsai://aggregates/` resource returns the current aggregate count.
@@ -93,7 +97,7 @@ Search semantically:
 uv run ./src/main.py -- search "query"
 ```
 
-Synchronize the derived search index and run configured audit checks:
+Refresh configured sources, synchronize the search index, and run audits:
 
 ```bash
 uv run ./src/main.py -- sync
@@ -153,6 +157,7 @@ To enable OpenCode to directly interact with Bangumi,
   - [x] Gate database tools until health checks pass
   - [x] Expose aggregate collection summary resource
 - [ ] Bangumi integration
+  - [x] Mirror a configured user's anime collections with TTL-controlled sync
   - [ ] Synchronize missing Bangumi collections to local catalog
 - [ ] Torrent management
   - [x] Group torrent hashes within aggregates

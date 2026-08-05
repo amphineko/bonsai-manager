@@ -8,6 +8,7 @@ from lib.models.audit import AuditReport
 from lib.models.health import HealthCheckReport, SearchIndexConsistencyCheck
 from lib.models.qbittorrent import QbittorrentTorrent
 from lib.models.search import AggregateSearchDocument, AggregateSearchResult
+from lib.models.sync import BangumiCollectionSyncResult
 from lib.search import AggregateSearchManager
 from lib.search.repositories import LanceDbSearchRepository
 from lib.services.aggregates import AggregateService
@@ -193,6 +194,13 @@ class IndexedAggregateService:
         show_progress: bool = False,
     ) -> list[AggregateSearchDocument]:
         return self.search.rebuild(force=force, show_progress=show_progress)
+
+    def sync_bangumi_collections(
+        self,
+        *,
+        force: bool = False,
+    ) -> BangumiCollectionSyncResult:
+        return self.aggregates.bangumi_collections.sync(force=force)
 
     def get_torrent_display_path(self, torrent: Torrent) -> str:
         return self.aggregates.get_torrent_display_path(torrent)

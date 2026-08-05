@@ -13,7 +13,9 @@ from lib.sync import create_sync_runner
 @click.option(
     "--force",
     is_flag=True,
-    help="Recompute all aggregate embeddings while synchronizing.",
+    help=(
+        "Refresh remote data regardless of TTL and recompute all aggregate embeddings."
+    ),
 )
 @click.option(
     "--no-audit",
@@ -28,7 +30,7 @@ def sync(
     force: bool,
     audit_enabled: bool,
 ) -> SyncReport:
-    """Repair derived state and run configured audit checks."""
+    """Refresh configured sources, repair derived state, and run audits."""
     health_before = IndexedAggregateService.check_health_from_config(config)
     indexed = IndexedAggregateService.from_config(config)
     try:
