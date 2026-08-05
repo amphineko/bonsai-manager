@@ -188,6 +188,9 @@ class IndexedAggregateService:
     ) -> list[AggregateSearchResult]:
         return self.search.search(query, limit=limit, threshold=threshold)
 
+    def warm_up_search(self) -> None:
+        self.search.warm_up()
+
     def rebuild_search_index(
         self,
         force: bool = False,

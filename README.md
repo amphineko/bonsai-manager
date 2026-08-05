@@ -91,6 +91,9 @@ Launch the interactive TUI:
 uv run ./src/main.py -- tui
 ```
 
+The TUI combines immediate local regex filtering with debounced semantic search
+backed by LanceDB.
+
 Search semantically:
 
 ```bash
