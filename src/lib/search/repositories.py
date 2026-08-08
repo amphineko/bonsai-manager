@@ -76,9 +76,7 @@ class LanceDbSearchRepository:
         )
 
     def documents_table_exists(self) -> bool:
-        documents_path = self.config.lancedb_path / f"{DOCUMENTS_TABLE}.lance"
-        manifest_path = self.config.lancedb_path / "__manifest"
-        if not documents_path.is_dir() or not manifest_path.is_dir():
+        if not self.config.lancedb_path.is_dir():
             return False
         try:
             db = lancedb.connect(str(self.config.lancedb_path))
