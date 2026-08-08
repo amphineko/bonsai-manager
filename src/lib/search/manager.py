@@ -43,13 +43,18 @@ class AggregateSearchManager:
 
     @property
     def model(self) -> SentenceTransformer:
+        self.warm_up()
+        if self._model is None:
+            raise AssertionError("Embedding model was not initialized.")
+        return self._model
+
+    def warm_up(self) -> None:
         if self._model is None:
             self._model = SentenceTransformer(
                 self.config.embedding_model,
                 device=self.config.embedding_device,
                 local_files_only=self.local_files_only,
             )
-        return self._model
 
     def list_documents(self) -> list[AggregateSearchDocument]:
         return self.repository.list_documents()
