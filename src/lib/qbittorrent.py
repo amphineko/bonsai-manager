@@ -1,7 +1,7 @@
-import requests
 from pydantic import TypeAdapter
 
 from config import QbittorrentConfig, load_config
+from lib.http_client import DEFAULT_HTTP_TIMEOUT, create_retrying_session
 from lib.models.qbittorrent import QbittorrentTorrent, QbittorrentTorrentFile
 
 
@@ -9,7 +9,7 @@ class QbittorrentClient:
     def __init__(self, config: QbittorrentConfig | None = None):
         self.config = config or load_config().qbittorrent
         self.base_url = self.config.base_url
-        self.session = requests.Session()
+        self.session = create_retrying_session()
 
     def close(self) -> None:
         self.session.close()
@@ -22,12 +22,13 @@ class QbittorrentClient:
                 "username": self.config.username,
                 "password": self.config.password,
             },
+            timeout=DEFAULT_HTTP_TIMEOUT,
         )
         resp.raise_for_status()
 
     def get_all_torrents(self) -> list[QbittorrentTorrent]:
         info_url = f"{self.base_url}/torrents/info"
-        resp = self.session.get(info_url)
+        resp = self.session.get(info_url, timeout=DEFAULT_HTTP_TIMEOUT)
         resp.raise_for_status()
         return TypeAdapter(list[QbittorrentTorrent]).validate_python(resp.json())
 
@@ -45,12 +46,17 @@ class QbittorrentClient:
         resp = self.session.get(
             info_url,
             params={"hashes": "|".join(torrent_hashes)},
+            timeout=DEFAULT_HTTP_TIMEOUT,
         )
         resp.raise_for_status()
         return TypeAdapter(list[QbittorrentTorrent]).validate_python(resp.json())
 
     def get_torrent_files(self, torrent_hash: str) -> list[QbittorrentTorrentFile]:
         files_url = f"{self.base_url}/torrents/files"
-        resp = self.session.get(files_url, params={"hash": torrent_hash})
+        resp = self.session.get(
+            files_url,
+            params={"hash": torrent_hash},
+            timeout=DEFAULT_HTTP_TIMEOUT,
+        )
         resp.raise_for_status()
         return TypeAdapter(list[QbittorrentTorrentFile]).validate_python(resp.json())

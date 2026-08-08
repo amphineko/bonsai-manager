@@ -31,11 +31,16 @@ class StubQbittorrentClient(QbittorrentClient):
         self.login_count += 1
 
     @override
-    def get_torrent_info(self, torrent_hash: str) -> QbittorrentTorrent | None:
-        self.requested_hashes.append(torrent_hash)
-        if torrent_hash not in self.available_hashes:
-            return None
-        return QbittorrentTorrent(hash=torrent_hash, name=torrent_hash)
+    def get_torrents_info(
+        self,
+        torrent_hashes: list[str],
+    ) -> list[QbittorrentTorrent]:
+        self.requested_hashes.extend(torrent_hashes)
+        return [
+            QbittorrentTorrent(hash=torrent_hash.upper(), name=torrent_hash)
+            for torrent_hash in torrent_hashes
+            if torrent_hash in self.available_hashes
+        ]
 
 
 class SqliteAggregateTestCase(unittest.TestCase):
@@ -192,7 +197,7 @@ class AggregateTorrentServiceTest(SqliteAggregateTestCase):
     def test_qbittorrent_validation_failure_does_not_write(self) -> None:
         before = self.repository.get_by_short_name("Fixture")
 
-        with self.assertRaisesRegex(ValueError, f"{HASH_D}.*not found"):
+        with self.assertRaisesRegex(ValueError, f"not found.*{HASH_D}"):
             self.service.update_aggregate_torrents(
                 short_name="Fixture",
                 group="Group A",
@@ -201,6 +206,20 @@ class AggregateTorrentServiceTest(SqliteAggregateTestCase):
 
         after = self.repository.get_by_short_name("Fixture")
         self.assertEqual(after, before)
+
+    def test_qbittorrent_validation_batches_and_reports_missing(self) -> None:
+        self.qbit.available_hashes = {HASH_C}
+
+        with self.assertRaisesRegex(
+            ValueError,
+            f"Torrents not found in qBittorrent: {HASH_A}, {HASH_D}",
+        ):
+            self.service.validate_torrent_hashes_in_qbittorrent(
+                [HASH_A, HASH_C, HASH_D]
+            )
+
+        self.assertEqual(self.qbit.login_count, 1)
+        self.assertEqual(self.qbit.requested_hashes, [HASH_A, HASH_C, HASH_D])
 
 
 def aggregate_fixture() -> Aggregate:
