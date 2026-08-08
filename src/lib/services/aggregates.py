@@ -8,6 +8,7 @@ from lib.models.audit import AuditReport
 from lib.models.qbittorrent import QbittorrentTorrent
 from lib.qbittorrent import QbittorrentClient
 from lib.services.bangumi import AggregateBangumiService
+from lib.services.bangumi_collections import BangumiCollectionService
 from lib.services.creation import AggregateCreationService
 from lib.services.queries import AggregateQueryService
 from lib.services.torrents import AggregateTorrentService
@@ -29,6 +30,11 @@ class AggregateService:
         self.queries = AggregateQueryService(self.repository, self.qbit)
         self.torrents = AggregateTorrentService(self.repository, self.qbit)
         self.bangumi = AggregateBangumiService(self.repository, self.bangumi_client)
+        self.bangumi_collections = BangumiCollectionService(
+            self.repository,
+            self.bangumi_client,
+            self.config.bangumi,
+        )
         self.creation = AggregateCreationService(
             self.repository,
             self.torrents,

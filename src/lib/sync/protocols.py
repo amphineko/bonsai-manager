@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Protocol
 from lib.models.audit import AuditReport
 from lib.models.health import HealthCheckReport
 from lib.models.search import AggregateSearchDocument
+from lib.models.sync import BangumiCollectionSyncResult
 
 if TYPE_CHECKING:
     from lib.models.sync import SyncStepResult
@@ -12,6 +13,12 @@ if TYPE_CHECKING:
 
 
 class SyncRuntime(Protocol):
+    def sync_bangumi_collections(
+        self,
+        *,
+        force: bool = False,
+    ) -> BangumiCollectionSyncResult: ...
+
     def check_health(self) -> HealthCheckReport: ...
 
     def rebuild_search_index(

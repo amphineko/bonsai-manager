@@ -38,6 +38,7 @@ from lib.models.qbittorrent import QbittorrentTorrent
 from lib.models.search import SearchIndexRebuildResult
 from lib.models.sync import (
     AuditSyncResult,
+    BangumiCollectionSyncResult,
     SearchIndexSyncResult,
     SyncReport,
     SyncStepStatus,
@@ -83,6 +84,7 @@ logger = logging.getLogger(__name__)
 
 class MockHandler(BaseHTTPRequestHandler):
     torrent_info_requests: ClassVar[list[list[str]]] = []
+    collection_requests: ClassVar[list[dict[str, list[str]]]] = []
     fail_torrent_info_requests: ClassVar[bool] = False
 
     def do_POST(self) -> None:
@@ -107,6 +109,31 @@ class MockHandler(BaseHTTPRequestHandler):
                         "name_cn": "MCP E2E 中文名",
                         "type": 2,
                         "tags": [{"name": "e2e", "count": 1}],
+                    }
+                )
+            case "/v0/users/mcp-fixture/collections":
+                params = parse_qs(parsed.query)
+                self.collection_requests.append(params)
+                logger.info("mock Bangumi collection lookup: %s", params)
+                self.send_json(
+                    {
+                        "total": 1,
+                        "limit": int(params.get("limit", ["50"])[0]),
+                        "offset": int(params.get("offset", ["0"])[0]),
+                        "data": [
+                            {
+                                "subject_id": SUBJECT_ID,
+                                "subject_type": 2,
+                                "type": 3,
+                                "updated_at": "2026-08-03T12:00:00+00:00",
+                                "subject": {
+                                    "name": "MCP E2E Subject",
+                                    "name_cn": "MCP E2E 中文名",
+                                    "type": 2,
+                                    "tags": [{"name": "e2e", "count": 1}],
+                                },
+                            }
+                        ],
                     }
                 )
             case "/api/v2/torrents/info":
@@ -166,6 +193,7 @@ class MockHandler(BaseHTTPRequestHandler):
 class MockHttpServer:
     def __init__(self) -> None:
         MockHandler.torrent_info_requests.clear()
+        MockHandler.collection_requests.clear()
         MockHandler.fail_torrent_info_requests = False
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), MockHandler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -185,6 +213,10 @@ class MockHttpServer:
     @property
     def torrent_info_requests(self) -> list[list[str]]:
         return list(MockHandler.torrent_info_requests)
+
+    @property
+    def collection_requests(self) -> list[dict[str, list[str]]]:
+        return list(MockHandler.collection_requests)
 
     def set_torrent_info_failure(self, enabled: bool) -> None:
         MockHandler.fail_torrent_info_requests = enabled
@@ -272,6 +304,68 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
                 await self.initialize_healthy_stores(client)
                 await self.add_test_aggregate(client)
                 await self.assert_health_gate_and_recovery(client, env)
+
+    async def test_bangumi_collection_sync_ttl(self) -> None:
+        async with asyncio.timeout(MCP_TIMEOUT_SECONDS):
+            env = self.mcp_env()
+            env["BANGUMI_USERNAME"] = "mcp-fixture"
+            env["BANGUMI_COLLECTION_TTL_SECONDS"] = "21600"
+            async with Client(self.mcp_transport(env)) as client:
+                first = (
+                    ResponsePayload[SyncReport]
+                    .model_validate(await call_tool(client, "sync", {}))
+                    .data
+                )
+                first_collection = first.steps[0]
+                self.assertIsInstance(
+                    first_collection,
+                    BangumiCollectionSyncResult,
+                )
+                self.assertEqual(first_collection.status, SyncStepStatus.COMPLETED)
+                self.assertEqual(
+                    (first_collection.fetched, first_collection.created),
+                    (1, 1),
+                )
+
+                second = (
+                    ResponsePayload[SyncReport]
+                    .model_validate(await call_tool(client, "sync", {}))
+                    .data
+                )
+                second_collection = second.steps[0]
+                self.assertIsInstance(
+                    second_collection,
+                    BangumiCollectionSyncResult,
+                )
+                self.assertEqual(second_collection.status, SyncStepStatus.SKIPPED)
+                self.assertEqual(len(self.mock_server.collection_requests), 1)
+
+                forced = (
+                    ResponsePayload[SyncReport]
+                    .model_validate(await call_tool(client, "sync", {"force": True}))
+                    .data
+                )
+                forced_collection = forced.steps[0]
+                self.assertIsInstance(
+                    forced_collection,
+                    BangumiCollectionSyncResult,
+                )
+                self.assertEqual(forced_collection.status, SyncStepStatus.COMPLETED)
+                self.assertEqual(forced_collection.unchanged, 1)
+                self.assertEqual(len(self.mock_server.collection_requests), 2)
+
+            with sqlite3.connect(self.db_path) as connection:
+                collection_row = connection.execute(
+                    """
+                    SELECT username, subject_id, collection_type, removed_at
+                    FROM bangumi_user_collections
+                    """
+                ).fetchone()
+                sync_state_count = connection.execute(
+                    "SELECT count(*) FROM bangumi_collection_sync_states"
+                ).fetchone()
+            self.assertEqual(collection_row, ("mcp-fixture", SUBJECT_ID, 3, None))
+            self.assertEqual(sync_state_count, (1,))
 
     def mcp_transport(self, env: dict[str, str]) -> StdioTransport:
         return StdioTransport(
@@ -392,6 +486,10 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
                 health_before=uninitialized_health_report,
                 health_after=expected_health_after,
                 steps=[
+                    BangumiCollectionSyncResult(
+                        status=SyncStepStatus.SKIPPED,
+                        reason="BANGUMI_USERNAME is not configured.",
+                    ),
                     SearchIndexSyncResult(
                         status=SyncStepStatus.COMPLETED,
                         indexed_documents=0,
@@ -534,6 +632,10 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
                 health_before=unhealthy_report,
                 health_after=expected_healthy_report,
                 steps=[
+                    BangumiCollectionSyncResult(
+                        status=SyncStepStatus.SKIPPED,
+                        reason="BANGUMI_USERNAME is not configured.",
+                    ),
                     SearchIndexSyncResult(
                         status=SyncStepStatus.COMPLETED,
                         indexed_documents=1,

@@ -1,7 +1,7 @@
 from enum import StrEnum
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, Field, model_validator
 
 from lib.models.audit import AuditReport
 from lib.models.health import HealthCheckReport
@@ -11,6 +11,57 @@ class SyncStepStatus(StrEnum):
     COMPLETED = "completed"
     SKIPPED = "skipped"
     FAILED = "failed"
+
+
+class BangumiCollectionSyncResult(BaseModel):
+    step: Literal["bangumi_collections"] = "bangumi_collections"
+    status: SyncStepStatus
+    reason: str | None = None
+    last_successful_sync_at: AwareDatetime | None = None
+    next_refresh_at: AwareDatetime | None = None
+    fetched: int = 0
+    created: int = 0
+    updated: int = 0
+    removed: int = 0
+    reactivated: int = 0
+    unchanged: int = 0
+    errors: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_status(self) -> Self:
+        counts = (
+            self.fetched,
+            self.created,
+            self.updated,
+            self.removed,
+            self.reactivated,
+            self.unchanged,
+        )
+        match self.status:
+            case SyncStepStatus.COMPLETED:
+                if (
+                    self.reason is not None
+                    or self.errors
+                    or self.last_successful_sync_at is None
+                    or self.next_refresh_at is None
+                ):
+                    raise ValueError(
+                        "A completed Bangumi collection step requires refresh "
+                        "timestamps and no reason or errors."
+                    )
+            case SyncStepStatus.SKIPPED:
+                if self.reason is None or self.errors or any(counts):
+                    raise ValueError(
+                        "A skipped Bangumi collection step requires a reason and "
+                        "cannot have counts or errors."
+                    )
+            case SyncStepStatus.FAILED:
+                if self.reason is not None or not self.errors or any(counts):
+                    raise ValueError(
+                        "A failed Bangumi collection step requires errors and cannot "
+                        "have a reason or counts."
+                    )
+        return self
 
 
 class SearchIndexSyncResult(BaseModel):
@@ -70,7 +121,7 @@ class AuditSyncResult(BaseModel):
 
 
 type SyncStepResult = Annotated[
-    SearchIndexSyncResult | AuditSyncResult,
+    BangumiCollectionSyncResult | SearchIndexSyncResult | AuditSyncResult,
     Field(discriminator="step"),
 ]
 

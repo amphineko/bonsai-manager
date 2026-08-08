@@ -4,7 +4,11 @@ from lib.models.health import HealthCheckReport
 from lib.sync.context import SyncContext
 from lib.sync.protocols import SyncRuntime
 from lib.sync.runner import SyncRunner
-from lib.sync.steps import AuditSyncStep, SearchIndexSyncStep
+from lib.sync.steps import (
+    AuditSyncStep,
+    BangumiCollectionSyncStep,
+    SearchIndexSyncStep,
+)
 
 
 def create_sync_runner(
@@ -24,5 +28,5 @@ def create_sync_runner(
     )
     return SyncRunner(
         context,
-        [SearchIndexSyncStep(), AuditSyncStep()],
+        [BangumiCollectionSyncStep(), SearchIndexSyncStep(), AuditSyncStep()],
     )
