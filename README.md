@@ -15,20 +15,12 @@ Install dependencies:
 uv sync
 ```
 
-Create a local `.env` file as needed:
+Create a local `.env` file from the sanitized template, then fill in credentials
+and other site-specific values:
 
 ```bash
-DB_PATH=db.sqlite3
-QBIT_HOST=http://localhost
-QBIT_PORT=8080
-QBIT_USERNAME=admin
-QBIT_PASSWORD=adminadmin
-BANGUMI_TOKEN=
-BANGUMI_USERNAME=
-BANGUMI_COLLECTION_TTL_SECONDS=21600
-AUDIT_CHECKS=torrent_mapping
-AUDIT_CATEGORIES=anime,RSS,prowlarr
-SEARCH_LANCEDB_PATH=aggregate_search.lancedb
+cp env.example .env
+uv run pre-commit install
 ```
 
 ## Usage

@@ -383,7 +383,7 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
                 "QBIT_HOST": self.mock_server.host,
                 "QBIT_PORT": str(self.mock_server.port),
                 "QBIT_USERNAME": "mock",
-                "QBIT_PASSWORD": "mock",
+                "QBIT_PASSWORD": "mock",  # pragma: allowlist secret
                 "BANGUMI_BASE_URL": self.mock_server.base_url,
                 "BANGUMI_TOKEN": "",
                 "SEARCH_LANCEDB_PATH": str(self.search_path),
