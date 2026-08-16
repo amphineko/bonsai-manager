@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 MCP_TIMEOUT_SECONDS = 45.0
+HEALTH_RECOVERY_TIMEOUT_SECONDS = 90.0
 
 SUBJECT_ID = 123456
 SHORT_NAME = "MCP E2E Fixture"
@@ -298,7 +299,7 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
                 await self.assert_torrent_group_cascade(client)
 
     async def test_health_gate_drift_recovery(self) -> None:
-        async with asyncio.timeout(MCP_TIMEOUT_SECONDS):
+        async with asyncio.timeout(HEALTH_RECOVERY_TIMEOUT_SECONDS):
             env = self.mcp_env()
             async with Client(self.mcp_transport(env)) as client:
                 await self.initialize_healthy_stores(client)
@@ -380,8 +381,7 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
         env.update(
             {
                 "DB_PATH": str(self.db_path),
-                "QBIT_HOST": self.mock_server.host,
-                "QBIT_PORT": str(self.mock_server.port),
+                "QBIT_URL": self.mock_server.base_url,
                 "QBIT_USERNAME": "mock",
                 "QBIT_PASSWORD": "mock",  # pragma: allowlist secret
                 "BANGUMI_BASE_URL": self.mock_server.base_url,

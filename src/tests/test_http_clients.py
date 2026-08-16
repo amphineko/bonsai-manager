@@ -75,10 +75,9 @@ class QbittorrentHttpTest(unittest.TestCase):
     def setUp(self) -> None:
         self.client = QbittorrentClient(
             QbittorrentConfig(
-                host="https://example.invalid",
-                port=443,
+                url="https://example.invalid:443",
                 username="fixture",
-                password="secret",
+                password="",
             )
         )
 
@@ -94,7 +93,7 @@ class QbittorrentHttpTest(unittest.TestCase):
 
         post.assert_called_once_with(
             "https://example.invalid:443/api/v2/auth/login",
-            data={"username": "fixture", "password": "secret"},
+            data={"username": "fixture", "password": ""},
             timeout=DEFAULT_HTTP_TIMEOUT,
         )
 
