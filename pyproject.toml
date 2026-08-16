@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "click>=8.4.2",
-    "fastmcp>=3.4.5",
+    "fastmcp>=3.4.6",
     "lancedb>=0.36.0",
     "pydantic>=2.13.4",
     "pyrefly>=1.1.1",
