@@ -48,15 +48,21 @@ class AggregateTorrentService:
                 )
 
     def validate_torrent_hashes_in_qbittorrent(self, torrent_hashes: list[str]) -> None:
-        if torrent_hashes:
-            self.qbit.login()
+        if not torrent_hashes:
+            return
 
-        for torrent_hash in torrent_hashes:
-            info = self.qbit.get_torrent_info(torrent_hash)
-            if not info:
-                raise ValueError(
-                    f"Torrent with hash '{torrent_hash}' not found in qBittorrent."
-                )
+        self.qbit.login()
+        torrents = self.qbit.get_torrents_info(torrent_hashes)
+        found_hashes = {torrent.hash.casefold() for torrent in torrents}
+        missing_hashes = [
+            torrent_hash
+            for torrent_hash in torrent_hashes
+            if torrent_hash.casefold() not in found_hashes
+        ]
+        if missing_hashes:
+            raise ValueError(
+                "Torrents not found in qBittorrent: " + ", ".join(missing_hashes)
+            )
 
     def build_torrents(self, torrent_hashes: list[str]) -> dict[str, list[Torrent]]:
         if not torrent_hashes:

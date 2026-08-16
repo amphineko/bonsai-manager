@@ -1,8 +1,7 @@
 from typing import TypedDict, cast
 
-import requests
-
 from config import BangumiConfig, load_config
+from lib.http_client import DEFAULT_HTTP_TIMEOUT, create_retrying_session
 from lib.models.bangumi import (
     BangumiCollectionPage,
     BangumiRemoteCollection,
@@ -35,7 +34,7 @@ class BangumiClient:
         self.config = config or load_config().bangumi
         self.base_url = self.config.base_url.rstrip("/")
         self.token = token if token is not None else self.config.token
-        self.session = requests.Session()
+        self.session = create_retrying_session()
         self.session.headers.update(
             {
                 "Accept": "application/json",
@@ -50,7 +49,7 @@ class BangumiClient:
 
     def get_subject(self, subject_id: int) -> BangumiSubjectResponse:
         url = f"{self.base_url}/v0/subjects/{subject_id}"
-        response = self.session.get(url)
+        response = self.session.get(url, timeout=DEFAULT_HTTP_TIMEOUT)
         response.raise_for_status()
         return cast("BangumiSubjectResponse", response.json())
 
@@ -81,6 +80,7 @@ class BangumiClient:
                     "limit": COLLECTION_PAGE_LIMIT,
                     "offset": offset,
                 },
+                timeout=DEFAULT_HTTP_TIMEOUT,
             )
             response.raise_for_status()
             page = BangumiCollectionPage.model_validate(response.json())

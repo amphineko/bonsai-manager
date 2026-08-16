@@ -7,6 +7,7 @@ from unittest.mock import Mock, call, patch
 
 from config import BangumiConfig, Config
 from lib.bangumi import BangumiClient
+from lib.http_client import DEFAULT_HTTP_TIMEOUT
 from lib.models.bangumi import (
     BangumiCollectionType,
     BangumiRemoteCollection,
@@ -227,10 +228,12 @@ class BangumiClientCollectionTest(unittest.TestCase):
                 call(
                     "https://example.invalid/v0/users/fixture/collections",
                     params={"subject_type": 2, "limit": 50, "offset": 0},
+                    timeout=DEFAULT_HTTP_TIMEOUT,
                 ),
                 call(
                     "https://example.invalid/v0/users/fixture/collections",
                     params={"subject_type": 2, "limit": 50, "offset": 50},
+                    timeout=DEFAULT_HTTP_TIMEOUT,
                 ),
             ],
         )
