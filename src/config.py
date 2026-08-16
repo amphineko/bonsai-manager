@@ -40,40 +40,45 @@ def load_environs() -> dict[str, str]:
 
 @dataclass
 class QbittorrentConfig:
-    host: str
-    port: int
+    url: str
     username: str
     password: str
 
+    def __post_init__(self) -> None:
+        try:
+            parsed = urlsplit(self.url)
+        except ValueError as exc:
+            raise ValueError("QBIT_URL is not a valid URL.") from exc
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError("QBIT_URL must use the http or https scheme.")
+        if parsed.hostname is None:
+            raise ValueError("QBIT_URL must include a hostname.")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("QBIT_URL must not include credentials.")
+        if parsed.path not in {"", "/"}:
+            raise ValueError("QBIT_URL must not include a path.")
+        if parsed.query or parsed.fragment:
+            raise ValueError("QBIT_URL must not include a query or fragment.")
+        if any(character.isspace() for character in parsed.netloc):
+            raise ValueError("QBIT_URL must not include whitespace.")
+        try:
+            _ = parsed.port
+        except ValueError as exc:
+            raise ValueError("QBIT_URL contains an invalid port.") from exc
+
+        self.url = urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
+
     @classmethod
     def from_env(cls, environs: dict[str, str]) -> QbittorrentConfig:
-        try:
-            port = int(environs.get("QBIT_PORT", "8080"))
-        except ValueError as exc:
-            raise ValueError(
-                f"QBIT_PORT must be an integer, got {environs.get('QBIT_PORT')}"
-            ) from exc
-
         return cls(
-            host=environs.get("QBIT_HOST", "http://localhost"),
-            port=port,
+            url=environs.get("QBIT_URL", "http://localhost:8080"),
             username=environs.get("QBIT_USERNAME", "admin"),
             password=environs.get("QBIT_PASSWORD", "adminadmin"),
         )
 
     @property
     def base_url(self) -> str:
-        parsed = urlsplit(self.host)
-        if not parsed.netloc:
-            parsed = urlsplit(f"//{self.host}")
-        if parsed.hostname is None:
-            raise ValueError(f"Invalid QBIT_HOST: {self.host!r}")
-
-        scheme = parsed.scheme or "http"
-        netloc = (
-            f"{parsed.hostname}:{self.port}" if parsed.port is None else parsed.netloc
-        )
-        return urlunsplit((scheme, netloc, "/api/v2", "", ""))
+        return f"{self.url}/api/v2"
 
 
 @dataclass
