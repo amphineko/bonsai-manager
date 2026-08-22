@@ -8,9 +8,14 @@ from unittest.mock import Mock, call, patch
 from config import BangumiConfig, Config
 from lib.bangumi import BangumiClient
 from lib.http_client import DEFAULT_HTTP_TIMEOUT
+from lib.models.aggregates import Aggregate, Torrent
 from lib.models.bangumi import (
+    BangumiCollectionAggregateCoverage,
+    BangumiCollectionLocalState,
+    BangumiCollectionSubjectCoverage,
     BangumiCollectionType,
     BangumiRemoteCollection,
+    BangumiSubject,
     BangumiSubjectSnapshot,
 )
 from lib.models.sync import BangumiCollectionSyncResult, SyncStepStatus
@@ -181,6 +186,56 @@ class BangumiCollectionServiceTest(unittest.TestCase):
             rows = collection_repository.list_for_user("fixture")
         self.assertEqual([row.subject_id for row in rows], [1])
 
+    def test_subject_coverage_supports_default_and_composed_filters(self) -> None:
+        client = StubBangumiClient(
+            [
+                collection_fixture(1, BangumiCollectionType.WISH),
+                collection_fixture(2, BangumiCollectionType.DOING),
+                collection_fixture(3, BangumiCollectionType.DOING),
+                collection_fixture(4, BangumiCollectionType.ON_HOLD),
+                collection_fixture(5, BangumiCollectionType.DROPPED),
+            ]
+        )
+        service = self.service(client)
+        service.sync()
+        with self.repository.get_repository(write=True) as repository:
+            repository.add(coverage_aggregate(2, "Empty"))
+            repository.add(coverage_aggregate(3, "Available", "a" * 40))
+            repository.add(coverage_aggregate(4, "On hold", "b" * 40))
+            repository.add(coverage_aggregate(5, "Dropped empty"))
+
+        self.assertEqual(
+            service.list_subject_coverage(),
+            [
+                coverage_result(
+                    1,
+                    BangumiCollectionType.WISH,
+                    BangumiCollectionLocalState.UNMAPPED,
+                ),
+                coverage_result(
+                    2,
+                    BangumiCollectionType.DOING,
+                    BangumiCollectionLocalState.EMPTY,
+                    aggregate_name="Empty",
+                ),
+            ],
+        )
+        self.assertEqual(
+            service.list_subject_coverage(
+                [BangumiCollectionType.ON_HOLD, BangumiCollectionType.DROPPED],
+                [BangumiCollectionLocalState.WITH_TORRENTS],
+            ),
+            [
+                coverage_result(
+                    4,
+                    BangumiCollectionType.ON_HOLD,
+                    BangumiCollectionLocalState.WITH_TORRENTS,
+                    aggregate_name="On hold",
+                    torrent_count=1,
+                )
+            ],
+        )
+
     def service(
         self,
         client: StubBangumiClient,
@@ -278,6 +333,34 @@ class BangumiConfigTest(unittest.TestCase):
 
         self.assertEqual(config.bangumi.username, "fixture")
         self.assertEqual(config.bangumi.collection_ttl, timedelta(hours=6))
+        self.assertEqual(
+            config.audit_bangumi_collection_types,
+            (BangumiCollectionType.WISH, BangumiCollectionType.DOING),
+        )
+        self.assertEqual(
+            config.audit_bangumi_collection_local_states,
+            (
+                BangumiCollectionLocalState.UNMAPPED,
+                BangumiCollectionLocalState.EMPTY,
+            ),
+        )
+
+    def test_collection_audit_filters_parse_names(self) -> None:
+        config = Config.from_env(
+            {
+                "AUDIT_BANGUMI_COLLECTION_TYPES": "on_hold,dropped",
+                "AUDIT_BANGUMI_COLLECTION_LOCAL_STATES": "with_torrents",
+            }
+        )
+
+        self.assertEqual(
+            config.audit_bangumi_collection_types,
+            (BangumiCollectionType.ON_HOLD, BangumiCollectionType.DROPPED),
+        )
+        self.assertEqual(
+            config.audit_bangumi_collection_local_states,
+            (BangumiCollectionLocalState.WITH_TORRENTS,),
+        )
 
     def test_collection_ttl_rejects_negative_values(self) -> None:
         with self.assertRaisesRegex(ValueError, "cannot be negative"):
@@ -298,6 +381,66 @@ def collection_fixture(
             name_cn=f"条目 {subject_id}",
             type=2,
         ),
+    )
+
+
+def coverage_aggregate(
+    subject_id: int,
+    short_name: str,
+    torrent_hash: str | None = None,
+) -> Aggregate:
+    return Aggregate(
+        short_name=short_name,
+        bangumi_subjects=[
+            BangumiSubject(
+                subject_id=subject_id,
+                last_updated_at=SYNCED_AT.isoformat(),
+                snapshot=subject_snapshot(subject_id),
+            )
+        ],
+        torrents=(
+            {"ungrouped": [Torrent(hash=torrent_hash)]}
+            if torrent_hash is not None
+            else {}
+        ),
+    )
+
+
+def coverage_result(
+    subject_id: int,
+    collection_type: BangumiCollectionType,
+    local_state: BangumiCollectionLocalState,
+    *,
+    aggregate_name: str | None = None,
+    torrent_count: int = 0,
+) -> BangumiCollectionSubjectCoverage:
+    return BangumiCollectionSubjectCoverage(
+        subject=BangumiSubject(
+            subject_id=subject_id,
+            last_updated_at=SYNCED_AT.isoformat(),
+            snapshot=subject_snapshot(subject_id),
+        ),
+        collection_type=collection_type,
+        local_state=local_state,
+        aggregates=(
+            [
+                BangumiCollectionAggregateCoverage(
+                    short_name=aggregate_name,
+                    torrent_count=torrent_count,
+                )
+            ]
+            if aggregate_name is not None
+            else []
+        ),
+        torrent_count=torrent_count,
+    )
+
+
+def subject_snapshot(subject_id: int) -> BangumiSubjectSnapshot:
+    return BangumiSubjectSnapshot(
+        name=f"Subject {subject_id}",
+        name_cn=f"条目 {subject_id}",
+        type=2,
     )
 
 

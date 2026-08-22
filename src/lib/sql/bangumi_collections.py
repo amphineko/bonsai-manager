@@ -4,9 +4,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 
 from lib.models.bangumi import (
+    BangumiCollectionAggregateCoverage,
+    BangumiCollectionLocalState,
+    BangumiCollectionSubjectCoverage,
     BangumiCollectionSyncState,
     BangumiCollectionType,
     BangumiRemoteCollection,
@@ -14,8 +17,13 @@ from lib.models.bangumi import (
     BangumiUserCollection,
 )
 from lib.sql.repositories import (
+    AggregateBangumiSubjectRow,
+    AggregateRow,
     BangumiCollectionSyncStateRow,
+    BangumiSubjectRow,
     BangumiUserCollectionRow,
+    TorrentRow,
+    bangumi_subject_from_row,
     upsert_subject_row,
 )
 
@@ -55,6 +63,123 @@ class SqliteBangumiCollectionRepository:
             )
         )
         return [collection_from_row(row) for row in rows]
+
+    def list_subject_coverage(
+        self,
+        username: str,
+        collection_types: tuple[BangumiCollectionType, ...],
+        local_states: tuple[BangumiCollectionLocalState, ...],
+    ) -> list[BangumiCollectionSubjectCoverage]:
+        """Query active collection subjects matching explicit coverage filters.
+
+        Coverage is calculated across every Aggregate linked to a subject. A subject
+        is unmapped when it has no Aggregate links, empty when all linked Aggregates
+        have no torrents, and with_torrents when any linked Aggregate has a torrent.
+        Soft-removed collection rows are excluded.
+        """
+        if not collection_types or not local_states:
+            return []
+
+        mapping_exists = (
+            select(AggregateBangumiSubjectRow.subject_id)
+            .where(
+                AggregateBangumiSubjectRow.subject_id
+                == BangumiUserCollectionRow.subject_id
+            )
+            .exists()
+        )
+        torrent_exists = (
+            select(TorrentRow.hash)
+            .join(
+                AggregateBangumiSubjectRow,
+                AggregateBangumiSubjectRow.aggregate_id == TorrentRow.aggregate_id,
+            )
+            .where(
+                AggregateBangumiSubjectRow.subject_id
+                == BangumiUserCollectionRow.subject_id
+            )
+            .exists()
+        )
+        state_predicates = {
+            BangumiCollectionLocalState.UNMAPPED: ~mapping_exists,
+            BangumiCollectionLocalState.EMPTY: mapping_exists & ~torrent_exists,
+            BangumiCollectionLocalState.WITH_TORRENTS: torrent_exists,
+        }
+        coverage_rows = list(
+            self.session.execute(
+                select(BangumiUserCollectionRow, BangumiSubjectRow)
+                .join(
+                    BangumiSubjectRow,
+                    BangumiSubjectRow.subject_id == BangumiUserCollectionRow.subject_id,
+                )
+                .where(
+                    BangumiUserCollectionRow.username == username,
+                    BangumiUserCollectionRow.removed_at.is_(None),
+                    BangumiUserCollectionRow.collection_type.in_(
+                        int(collection_type) for collection_type in collection_types
+                    ),
+                    or_(
+                        *(state_predicates[local_state] for local_state in local_states)
+                    ),
+                )
+                .order_by(BangumiUserCollectionRow.subject_id)
+            )
+        )
+        subject_ids = [collection.subject_id for collection, _ in coverage_rows]
+        aggregates_by_subject: dict[int, list[BangumiCollectionAggregateCoverage]] = {
+            subject_id: [] for subject_id in subject_ids
+        }
+        if subject_ids:
+            aggregate_rows = self.session.execute(
+                select(
+                    AggregateBangumiSubjectRow.subject_id,
+                    AggregateRow.short_name,
+                    func.count(TorrentRow.hash),
+                )
+                .join(
+                    AggregateRow,
+                    AggregateRow.id == AggregateBangumiSubjectRow.aggregate_id,
+                )
+                .outerjoin(TorrentRow, TorrentRow.aggregate_id == AggregateRow.id)
+                .where(AggregateBangumiSubjectRow.subject_id.in_(subject_ids))
+                .group_by(
+                    AggregateBangumiSubjectRow.subject_id,
+                    AggregateRow.id,
+                    AggregateRow.short_name,
+                )
+                .order_by(
+                    AggregateBangumiSubjectRow.subject_id,
+                    AggregateRow.short_name,
+                )
+            )
+            for subject_id, short_name, torrent_count in aggregate_rows:
+                aggregates_by_subject[subject_id].append(
+                    BangumiCollectionAggregateCoverage(
+                        short_name=short_name,
+                        torrent_count=torrent_count,
+                    )
+                )
+
+        results = []
+        for collection, subject_row in coverage_rows:
+            aggregates = aggregates_by_subject[collection.subject_id]
+            torrent_count = sum(aggregate.torrent_count for aggregate in aggregates)
+            if not aggregates:
+                local_state = BangumiCollectionLocalState.UNMAPPED
+            elif torrent_count == 0:
+                local_state = BangumiCollectionLocalState.EMPTY
+            else:
+                local_state = BangumiCollectionLocalState.WITH_TORRENTS
+            results.append(
+                BangumiCollectionSubjectCoverage(
+                    subject=bangumi_subject_from_row(subject_row),
+                    collection_type=BangumiCollectionType(collection.collection_type),
+                    local_state=local_state,
+                    aggregates=aggregates,
+                    torrent_count=torrent_count,
+                )
+            )
+        return results
 
     def synchronize(
         self,

@@ -13,6 +13,11 @@ from lib.mcp import McpContext
 from lib.models import ResponsePayload
 from lib.models.aggregates import Aggregate
 from lib.models.audit import AuditReport
+from lib.models.bangumi import (
+    BangumiCollectionLocalState,
+    BangumiCollectionSubjectCoverage,
+    BangumiCollectionType,
+)
 from lib.models.health import HealthCheckReport
 from lib.models.qbittorrent import QbittorrentTorrent
 from lib.models.search import AggregateSearchResults, SearchIndexRebuildResult
@@ -158,6 +163,26 @@ def create_mcp_server(config: Config) -> FastMCP[McpLifespanContext]:
             "Listed aggregates",
             aggregates,
         )
+
+    @mcp.tool
+    @health_gated
+    def list_bangumi_collection_subjects(
+        collection_types: list[BangumiCollectionType] | None = None,
+        local_states: list[BangumiCollectionLocalState] | None = None,
+    ) -> ResponsePayload[list[BangumiCollectionSubjectCoverage]]:
+        """List mirrored Bangumi collection subjects by local torrent coverage.
+
+        By default, return wish and doing subjects that either have no Aggregate
+        mapping or only map to Aggregates without torrents. Pass collection_types
+        and local_states to compose other queries, such as on-hold or dropped
+        subjects that still have tracked torrents. Only current collection rows are
+        returned; entries removed from the remote collection are excluded.
+        """
+        subjects = context.indexed.list_bangumi_collection_subjects(
+            collection_types,
+            local_states,
+        )
+        return success("Listed Bangumi collection subjects", subjects)
 
     @mcp.tool
     def get_torrent_info(

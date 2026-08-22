@@ -553,19 +553,7 @@ def aggregate_id_for_short_name(session: Session, short_name: str) -> int:
 def aggregate_from_row(row: AggregateRow) -> Aggregate:
     subjects = []
     for link in sorted(row.subject_links, key=lambda item: item.subject_id):
-        subject = link.subject
-        subjects.append(
-            BangumiSubject(
-                subject_id=subject.subject_id,
-                last_updated_at=subject.updated_at,
-                snapshot=BangumiSubjectSnapshot(
-                    name=subject.name,
-                    name_cn=subject.name_cn,
-                    type=subject.type,
-                    tags=json.loads(subject.tags_json),
-                ),
-            )
-        )
+        subjects.append(bangumi_subject_from_row(link.subject))
 
     torrents: dict[str, list[Torrent]] = {}
     for torrent in sorted(row.torrents, key=lambda item: item.hash):
@@ -581,6 +569,19 @@ def aggregate_from_row(row: AggregateRow) -> Aggregate:
         category=row.category,
         bangumi_subjects=subjects,
         torrents=ordered_torrent_groups(torrents),
+    )
+
+
+def bangumi_subject_from_row(row: BangumiSubjectRow) -> BangumiSubject:
+    return BangumiSubject(
+        subject_id=row.subject_id,
+        last_updated_at=row.updated_at,
+        snapshot=BangumiSubjectSnapshot(
+            name=row.name,
+            name_cn=row.name_cn,
+            type=row.type,
+            tags=json.loads(row.tags_json),
+        ),
     )
 
 

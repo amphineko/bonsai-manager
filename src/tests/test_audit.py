@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, cast, override
 
 from pydantic import ValidationError
 
-from lib.audit.checks import TorrentMappingAuditor
+from lib.audit.checks import CollectionCoverageAuditor, TorrentMappingAuditor
 from lib.audit.context import AuditContext
 from lib.audit.exceptions import AuditExecutionError, AuditSkipped
 from lib.audit.factory import create_audit_runner
@@ -17,6 +17,14 @@ from lib.models.audit import (
     AuditFinding,
     AuditReport,
     AuditSeverity,
+)
+from lib.models.bangumi import (
+    BangumiCollectionAggregateCoverage,
+    BangumiCollectionLocalState,
+    BangumiCollectionSubjectCoverage,
+    BangumiCollectionType,
+    BangumiSubject,
+    BangumiSubjectSnapshot,
 )
 from lib.models.qbittorrent import QbittorrentTorrent, QbittorrentTorrentFile
 from lib.sql.repositories import SqliteAggregateRepository
@@ -50,6 +58,45 @@ class StubAuditQbittorrentClient:
     ) -> list[QbittorrentTorrentFile]:
         self.file_calls.append(torrent_hash)
         return [QbittorrentTorrentFile(name=f"{torrent_hash}.mkv")]
+
+
+class StubCollectionCoverageProvider:
+    def __init__(self) -> None:
+        self.calls: list[
+            tuple[
+                tuple[BangumiCollectionType, ...],
+                tuple[BangumiCollectionLocalState, ...],
+            ]
+        ] = []
+
+    def list_subject_coverage(
+        self,
+        collection_types: tuple[BangumiCollectionType, ...],
+        local_states: tuple[BangumiCollectionLocalState, ...],
+    ) -> list[BangumiCollectionSubjectCoverage]:
+        self.calls.append((collection_types, local_states))
+        return [
+            BangumiCollectionSubjectCoverage(
+                subject=BangumiSubject(
+                    subject_id=42,
+                    last_updated_at="2026-08-16T12:00:00+00:00",
+                    snapshot=BangumiSubjectSnapshot(
+                        name="Fixture Subject",
+                        name_cn="测试条目",
+                        type=2,
+                    ),
+                ),
+                collection_type=BangumiCollectionType.DOING,
+                local_state=BangumiCollectionLocalState.EMPTY,
+                aggregates=[
+                    BangumiCollectionAggregateCoverage(
+                        short_name="Fixture Empty",
+                        torrent_count=0,
+                    )
+                ],
+                torrent_count=0,
+            )
+        ]
 
 
 class FailingAuditor:
@@ -193,6 +240,79 @@ class AuditFrameworkTest(unittest.TestCase):
         self.assertEqual(self.qbit.login_calls, 1)
         self.assertEqual(self.qbit.torrent_calls, 1)
         self.assertEqual(self.qbit.file_calls, [HASH_A])
+
+    def test_collection_coverage_auditor_reports_default_missing_subjects(self) -> None:
+        provider = StubCollectionCoverageProvider()
+        context = AuditContext(
+            repository=self.repository,
+            qbit=self.qbit,
+            categories=("anime",),
+            collection_coverage_provider=provider,
+        )
+
+        report = AuditRunner(context, [CollectionCoverageAuditor()]).run()
+
+        self.assertEqual(
+            provider.calls,
+            [
+                (
+                    (BangumiCollectionType.WISH, BangumiCollectionType.DOING),
+                    (
+                        BangumiCollectionLocalState.UNMAPPED,
+                        BangumiCollectionLocalState.EMPTY,
+                    ),
+                )
+            ],
+        )
+        self.assertEqual(
+            report,
+            AuditReport(
+                successful=True,
+                checks=[
+                    AuditCheckResult(
+                        auditor="collection_coverage",
+                        status=AuditCheckStatus.COMPLETED,
+                        findings=[
+                            AuditFinding(
+                                auditor="collection_coverage",
+                                code="collection.empty",
+                                severity=AuditSeverity.WARNING,
+                                message=(
+                                    "Collected Bangumi subject has no tracked torrents."
+                                ),
+                                aggregate_short_name="Fixture Empty",
+                                metadata={
+                                    "subject_id": 42,
+                                    "subject_name": "Fixture Subject",
+                                    "subject_name_cn": "测试条目",
+                                    "collection_type": "doing",
+                                    "local_state": "empty",
+                                    "aggregates": ["Fixture Empty"],
+                                    "torrent_count": 0,
+                                },
+                            )
+                        ],
+                    )
+                ],
+            ),
+        )
+
+    def test_collection_coverage_auditor_skips_without_configured_user(self) -> None:
+        report = AuditRunner(self.context, [CollectionCoverageAuditor()]).run()
+
+        self.assertEqual(
+            report,
+            AuditReport(
+                successful=True,
+                checks=[
+                    AuditCheckResult(
+                        auditor="collection_coverage",
+                        status=AuditCheckStatus.SKIPPED,
+                        skip_reason="BANGUMI_USERNAME is not configured.",
+                    )
+                ],
+            ),
+        )
 
     def test_torrent_mapping_auditor_reports_duplicate_locations(self) -> None:
         self.context._aggregates = (

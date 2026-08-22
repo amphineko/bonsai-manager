@@ -11,6 +11,9 @@ from lib.models.audit import (
     AuditSeverity,
 )
 from lib.models.bangumi import (
+    BangumiCollectionAggregateCoverage,
+    BangumiCollectionLocalState,
+    BangumiCollectionSubjectCoverage,
     BangumiCollectionSyncState,
     BangumiCollectionType,
     BangumiSubject,
@@ -61,6 +64,9 @@ __all__ = [
     "AuditReport",
     "AuditSeverity",
     "AuditSyncResult",
+    "BangumiCollectionAggregateCoverage",
+    "BangumiCollectionLocalState",
+    "BangumiCollectionSubjectCoverage",
     "BangumiCollectionSyncResult",
     "BangumiCollectionSyncState",
     "BangumiCollectionType",

@@ -8,6 +8,13 @@ from urllib.parse import urlsplit, urlunsplit
 
 from dotenv import dotenv_values
 
+from lib.models.bangumi import (
+    DEFAULT_BANGUMI_COLLECTION_LOCAL_STATES,
+    DEFAULT_BANGUMI_COLLECTION_TYPES,
+    BangumiCollectionLocalState,
+    BangumiCollectionType,
+)
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 ENVIRON_SOURCES = [
@@ -167,6 +174,8 @@ class Config:
     aggregate_category: str
     audit_checks: tuple[str, ...]
     audit_categories: tuple[str, ...]
+    audit_bangumi_collection_types: tuple[BangumiCollectionType, ...]
+    audit_bangumi_collection_local_states: tuple[BangumiCollectionLocalState, ...]
     bangumi: BangumiConfig
     qbittorrent: QbittorrentConfig
     search: SearchConfig
@@ -179,7 +188,9 @@ class Config:
             aggregate_category=environs.get("AGGREGATE_CATEGORY", "anime"),
             audit_checks=tuple(
                 check.strip()
-                for check in environs.get("AUDIT_CHECKS", "torrent_mapping").split(",")
+                for check in environs.get(
+                    "AUDIT_CHECKS", "torrent_mapping,collection_coverage"
+                ).split(",")
                 if check.strip()
             ),
             audit_categories=tuple(
@@ -188,6 +199,26 @@ class Config:
                     "AUDIT_CATEGORIES", "anime,RSS,prowlarr"
                 ).split(",")
                 if category.strip()
+            ),
+            audit_bangumi_collection_types=parse_bangumi_collection_types(
+                environs.get(
+                    "AUDIT_BANGUMI_COLLECTION_TYPES",
+                    ",".join(
+                        collection_type.name.lower()
+                        for collection_type in DEFAULT_BANGUMI_COLLECTION_TYPES
+                    ),
+                )
+            ),
+            audit_bangumi_collection_local_states=(
+                parse_bangumi_collection_local_states(
+                    environs.get(
+                        "AUDIT_BANGUMI_COLLECTION_LOCAL_STATES",
+                        ",".join(
+                            local_state.value
+                            for local_state in (DEFAULT_BANGUMI_COLLECTION_LOCAL_STATES)
+                        ),
+                    )
+                )
             ),
             bangumi=BangumiConfig.from_env(environs),
             qbittorrent=QbittorrentConfig.from_env(environs),
@@ -198,3 +229,39 @@ class Config:
 
 def load_config() -> Config:
     return Config.from_env(load_environs())
+
+
+def parse_bangumi_collection_types(
+    value: str,
+) -> tuple[BangumiCollectionType, ...]:
+    try:
+        collection_types = tuple(
+            BangumiCollectionType[item.strip().upper()]
+            for item in value.split(",")
+            if item.strip()
+        )
+    except KeyError as exc:
+        raise ValueError(
+            "AUDIT_BANGUMI_COLLECTION_TYPES must contain collection type names."
+        ) from exc
+    if not collection_types:
+        raise ValueError("AUDIT_BANGUMI_COLLECTION_TYPES cannot be empty.")
+    return collection_types
+
+
+def parse_bangumi_collection_local_states(
+    value: str,
+) -> tuple[BangumiCollectionLocalState, ...]:
+    try:
+        local_states = tuple(
+            BangumiCollectionLocalState(item.strip().lower())
+            for item in value.split(",")
+            if item.strip()
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "AUDIT_BANGUMI_COLLECTION_LOCAL_STATES must contain local state names."
+        ) from exc
+    if not local_states:
+        raise ValueError("AUDIT_BANGUMI_COLLECTION_LOCAL_STATES cannot be empty.")
+    return local_states

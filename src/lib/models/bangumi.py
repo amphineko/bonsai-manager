@@ -1,4 +1,4 @@
-from enum import IntEnum
+from enum import IntEnum, StrEnum
 
 from pydantic import AwareDatetime, BaseModel, Field
 
@@ -23,10 +23,27 @@ class BangumiSubject(BaseModel):
 
 class BangumiCollectionType(IntEnum):
     WISH = 1
+    COLLECT = 2
     DONE = 2
     DOING = 3
     ON_HOLD = 4
     DROPPED = 5
+
+
+class BangumiCollectionLocalState(StrEnum):
+    UNMAPPED = "unmapped"
+    EMPTY = "empty"
+    WITH_TORRENTS = "with_torrents"
+
+
+DEFAULT_BANGUMI_COLLECTION_TYPES = (
+    BangumiCollectionType.WISH,
+    BangumiCollectionType.DOING,
+)
+DEFAULT_BANGUMI_COLLECTION_LOCAL_STATES = (
+    BangumiCollectionLocalState.UNMAPPED,
+    BangumiCollectionLocalState.EMPTY,
+)
 
 
 class BangumiRemoteCollection(BaseModel):
@@ -53,6 +70,19 @@ class BangumiUserCollection(BaseModel):
     last_seen_at: AwareDatetime
     synced_at: AwareDatetime
     removed_at: AwareDatetime | None = None
+
+
+class BangumiCollectionAggregateCoverage(BaseModel):
+    short_name: str
+    torrent_count: int
+
+
+class BangumiCollectionSubjectCoverage(BaseModel):
+    subject: BangumiSubject
+    collection_type: BangumiCollectionType
+    local_state: BangumiCollectionLocalState
+    aggregates: list[BangumiCollectionAggregateCoverage] = Field(default_factory=list)
+    torrent_count: int
 
 
 class BangumiCollectionSyncState(BaseModel):
