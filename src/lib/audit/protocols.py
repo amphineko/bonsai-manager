@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
+from lib.models.bangumi import (
+    BangumiCollectionLocalState,
+    BangumiCollectionSubjectCoverage,
+    BangumiCollectionType,
+)
 from lib.models.qbittorrent import QbittorrentTorrent, QbittorrentTorrentFile
 
 if TYPE_CHECKING:
@@ -24,3 +29,11 @@ class AuditQbittorrentClient(Protocol):
         self,
         torrent_hash: str,
     ) -> list[QbittorrentTorrentFile]: ...
+
+
+class CollectionCoverageProvider(Protocol):
+    def list_subject_coverage(
+        self,
+        collection_types: tuple[BangumiCollectionType, ...],
+        local_states: tuple[BangumiCollectionLocalState, ...],
+    ) -> list[BangumiCollectionSubjectCoverage]: ...

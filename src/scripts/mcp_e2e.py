@@ -32,7 +32,15 @@ from lib.models.audit import (
     AuditReport,
     AuditSeverity,
 )
-from lib.models.bangumi import BangumiSubject, BangumiSubjectSnapshot, BangumiTag
+from lib.models.bangumi import (
+    BangumiCollectionAggregateCoverage,
+    BangumiCollectionLocalState,
+    BangumiCollectionSubjectCoverage,
+    BangumiCollectionType,
+    BangumiSubject,
+    BangumiSubjectSnapshot,
+    BangumiTag,
+)
 from lib.models.health import HealthCheckReport, SearchIndexConsistencyCheck
 from lib.models.qbittorrent import QbittorrentTorrent
 from lib.models.search import SearchIndexRebuildResult
@@ -311,6 +319,7 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
             env = self.mcp_env()
             env["BANGUMI_USERNAME"] = "mcp-fixture"
             env["BANGUMI_COLLECTION_TTL_SECONDS"] = "21600"
+            env["AUDIT_CHECKS"] = "collection_coverage"
             async with Client(self.mcp_transport(env)) as client:
                 first = (
                     ResponsePayload[SyncReport]
@@ -326,6 +335,91 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(
                     (first_collection.fetched, first_collection.created),
                     (1, 1),
+                )
+
+                missing = await self.list_bangumi_collection_subjects(client)
+                self.assertEqual(
+                    missing,
+                    [
+                        BangumiCollectionSubjectCoverage(
+                            subject=BangumiSubject(
+                                subject_id=SUBJECT_ID,
+                                last_updated_at=(missing[0].subject.last_updated_at),
+                                snapshot=BangumiSubjectSnapshot(
+                                    name="MCP E2E Subject",
+                                    name_cn="MCP E2E 中文名",
+                                    type=2,
+                                    tags=[BangumiTag(name="e2e", count=1)],
+                                ),
+                            ),
+                            collection_type=BangumiCollectionType.DOING,
+                            local_state=BangumiCollectionLocalState.UNMAPPED,
+                            torrent_count=0,
+                        )
+                    ],
+                )
+                audited = (
+                    ResponsePayload[AuditReport]
+                    .model_validate(await call_tool(client, "audit", {}))
+                    .data
+                )
+                self.assertEqual(
+                    audited,
+                    AuditReport(
+                        successful=True,
+                        checks=[
+                            AuditCheckResult(
+                                auditor="collection_coverage",
+                                status=AuditCheckStatus.COMPLETED,
+                                findings=[expected_collection_coverage_finding()],
+                            )
+                        ],
+                    ),
+                )
+
+                await call_tool(
+                    client,
+                    "add_aggregate",
+                    {
+                        "short_name": SHORT_NAME,
+                        "bangumi_subject_id": SUBJECT_ID,
+                        "torrent_hashes": [INITIAL_HASHES[0]],
+                    },
+                )
+                self.assertEqual(
+                    await self.list_bangumi_collection_subjects(client),
+                    [],
+                )
+                available = await self.list_bangumi_collection_subjects(
+                    client,
+                    collection_types=[BangumiCollectionType.DOING],
+                    local_states=[BangumiCollectionLocalState.WITH_TORRENTS],
+                )
+                self.assertEqual(
+                    available,
+                    [
+                        BangumiCollectionSubjectCoverage(
+                            subject=BangumiSubject(
+                                subject_id=SUBJECT_ID,
+                                last_updated_at=(available[0].subject.last_updated_at),
+                                snapshot=BangumiSubjectSnapshot(
+                                    name="MCP E2E Subject",
+                                    name_cn="MCP E2E 中文名",
+                                    type=2,
+                                    tags=[BangumiTag(name="e2e", count=1)],
+                                ),
+                            ),
+                            collection_type=BangumiCollectionType.DOING,
+                            local_state=(BangumiCollectionLocalState.WITH_TORRENTS),
+                            aggregates=[
+                                BangumiCollectionAggregateCoverage(
+                                    short_name=SHORT_NAME,
+                                    torrent_count=1,
+                                )
+                            ],
+                            torrent_count=1,
+                        )
+                    ],
                 )
 
                 second = (
@@ -1177,6 +1271,33 @@ class McpE2ETest(unittest.IsolatedAsyncioTestCase):
         listed = await call_tool(client, "list_aggregates", {})
         return ResponsePayload[list[Aggregate]].model_validate(listed).data
 
+    async def list_bangumi_collection_subjects(
+        self,
+        client: Client[Any],
+        *,
+        collection_types: list[BangumiCollectionType] | None = None,
+        local_states: list[BangumiCollectionLocalState] | None = None,
+    ) -> list[BangumiCollectionSubjectCoverage]:
+        arguments: dict[str, object] = {}
+        if collection_types is not None:
+            arguments["collection_types"] = [
+                int(collection_type) for collection_type in collection_types
+            ]
+        if local_states is not None:
+            arguments["local_states"] = [
+                local_state.value for local_state in local_states
+            ]
+        result = await call_tool(
+            client,
+            "list_bangumi_collection_subjects",
+            arguments,
+        )
+        return (
+            ResponsePayload[list[BangumiCollectionSubjectCoverage]]
+            .model_validate(result)
+            .data
+        )
+
     async def list_aggregate(
         self,
         client: Client[Any],
@@ -1309,8 +1430,31 @@ def expected_audit_report(
                 auditor="torrent_mapping",
                 status=AuditCheckStatus.COMPLETED,
                 findings=findings,
-            )
+            ),
+            AuditCheckResult(
+                auditor="collection_coverage",
+                status=AuditCheckStatus.SKIPPED,
+                skip_reason="BANGUMI_USERNAME is not configured.",
+            ),
         ],
+    )
+
+
+def expected_collection_coverage_finding() -> AuditFinding:
+    return AuditFinding(
+        auditor="collection_coverage",
+        code="collection.unmapped",
+        severity=AuditSeverity.WARNING,
+        message="Collected Bangumi subject is not mapped to an aggregate.",
+        metadata={
+            "subject_id": SUBJECT_ID,
+            "subject_name": "MCP E2E Subject",
+            "subject_name_cn": "MCP E2E 中文名",
+            "collection_type": "doing",
+            "local_state": "unmapped",
+            "aggregates": [],
+            "torrent_count": 0,
+        },
     )
 
 

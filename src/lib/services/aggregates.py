@@ -5,6 +5,11 @@ from lib.audit import create_audit_runner
 from lib.bangumi import BangumiClient
 from lib.models.aggregates import Aggregate, Torrent
 from lib.models.audit import AuditReport
+from lib.models.bangumi import (
+    BangumiCollectionLocalState,
+    BangumiCollectionSubjectCoverage,
+    BangumiCollectionType,
+)
 from lib.models.qbittorrent import QbittorrentTorrent
 from lib.qbittorrent import QbittorrentClient
 from lib.services.bangumi import AggregateBangumiService
@@ -105,6 +110,16 @@ class AggregateService:
     def count_aggregates(self) -> int:
         return self.queries.count_aggregates()
 
+    def list_bangumi_collection_subjects(
+        self,
+        collection_types: list[BangumiCollectionType] | None = None,
+        local_states: list[BangumiCollectionLocalState] | None = None,
+    ) -> list[BangumiCollectionSubjectCoverage]:
+        return self.bangumi_collections.list_subject_coverage(
+            collection_types,
+            local_states,
+        )
+
     def get_torrent_display_path(self, torrent: Torrent) -> str:
         return self.queries.get_torrent_display_path(torrent)
 
@@ -123,6 +138,13 @@ class AggregateService:
             self.qbit,
             categories=tuple(categories or self.config.audit_categories),
             auditor_names=self.config.audit_checks,
+            collection_coverage_provider=(
+                self.bangumi_collections
+                if self.config.bangumi.username is not None
+                else None
+            ),
+            collection_types=self.config.audit_bangumi_collection_types,
+            collection_local_states=(self.config.audit_bangumi_collection_local_states),
         ).run()
 
 

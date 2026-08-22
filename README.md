@@ -70,8 +70,10 @@ The MCP server provides tools to:
 - update Bangumi subjects and add, move, group, or remove torrent hashes
 - resolve torrent hashes to live qBittorrent names and metadata
 - list aggregates using SQLite filters
+- list mirrored Bangumi collection subjects by collection type and local torrent
+  coverage; the default reports wish/doing subjects without torrents
 - search aggregates semantically
-- run configured aggregate audits
+- run configured aggregate audits, including collection coverage checks
 - synchronize the Bangumi collection mirror and search index, then run audits
 - check health and rebuild the search index directly
 
@@ -150,6 +152,7 @@ To enable OpenCode to directly interact with Bangumi,
   - [x] Expose aggregate collection summary resource
 - [ ] Bangumi integration
   - [x] Mirror a configured user's anime collections with TTL-controlled sync
+  - [x] Query and audit mirrored subjects by local torrent coverage
   - [ ] Synchronize missing Bangumi collections to local catalog
 - [ ] Torrent management
   - [x] Group torrent hashes within aggregates

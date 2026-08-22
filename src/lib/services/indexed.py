@@ -5,6 +5,11 @@ from dataclasses import replace
 from config import Config, SearchConfig
 from lib.models.aggregates import Aggregate, Torrent
 from lib.models.audit import AuditReport
+from lib.models.bangumi import (
+    BangumiCollectionLocalState,
+    BangumiCollectionSubjectCoverage,
+    BangumiCollectionType,
+)
 from lib.models.health import HealthCheckReport, SearchIndexConsistencyCheck
 from lib.models.qbittorrent import QbittorrentTorrent
 from lib.models.search import AggregateSearchDocument, AggregateSearchResult
@@ -172,6 +177,16 @@ class IndexedAggregateService:
 
     def count_aggregates(self) -> int:
         return self.aggregates.count_aggregates()
+
+    def list_bangumi_collection_subjects(
+        self,
+        collection_types: list[BangumiCollectionType] | None = None,
+        local_states: list[BangumiCollectionLocalState] | None = None,
+    ) -> list[BangumiCollectionSubjectCoverage]:
+        return self.aggregates.list_bangumi_collection_subjects(
+            collection_types,
+            local_states,
+        )
 
     def check_health(self) -> HealthCheckReport:
         checks = [self.search.check_consistency()]
